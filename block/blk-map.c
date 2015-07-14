@@ -85,7 +85,9 @@ int blk_rq_map_user_iov(struct request_queue *q, struct request *rq,
 			unaligned = 1;
 	}
 
-	if (unaligned || (q->dma_pad_mask & iter->count) || map_data)
+	if (unaligned || map_data ||
+	    (q->dma_pad_mask & iter->count) ||
+	    ((q->queue_flags & (1 << QUEUE_FLAG_SG_GAPS) && iter->nr_segs > 1)))
 		bio = bio_copy_user_iov(q, map_data, iter, gfp_mask);
 	else
 		bio = bio_map_user_iov(q, iter, gfp_mask);
