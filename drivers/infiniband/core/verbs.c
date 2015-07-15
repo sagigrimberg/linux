@@ -1235,16 +1235,24 @@ int ib_dereg_mr(struct ib_mr *mr)
 }
 EXPORT_SYMBOL(ib_dereg_mr);
 
-struct ib_mr *ib_create_mr(struct ib_pd *pd,
-			   struct ib_mr_init_attr *mr_init_attr)
+/**
+ * ib_alloc_mr() - Allocates a memory region
+ * @pd:            protection domain associated with the region
+ * @mr_type:       memory region type
+ * @max_entries:   maximum registration entries available
+ * @flags:         create flags
+ */
+struct ib_mr *ib_alloc_mr(struct ib_pd *pd,
+			  enum ib_mr_type mr_type,
+			  u32 max_entries,
+			  u32 flags)
 {
 	struct ib_mr *mr;
 
-	if (!pd->device->create_mr)
+	if (!pd->device->alloc_mr)
 		return ERR_PTR(-ENOSYS);
 
-	mr = pd->device->create_mr(pd, mr_init_attr);
-
+	mr = pd->device->alloc_mr(pd, mr_type, max_entries, flags);
 	if (!IS_ERR(mr)) {
 		mr->device  = pd->device;
 		mr->pd      = pd;
@@ -1255,7 +1263,7 @@ struct ib_mr *ib_create_mr(struct ib_pd *pd,
 
 	return mr;
 }
-EXPORT_SYMBOL(ib_create_mr);
+EXPORT_SYMBOL(ib_alloc_mr);
 
 struct ib_mr *ib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len)
 {
