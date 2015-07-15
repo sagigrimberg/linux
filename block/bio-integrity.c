@@ -140,6 +140,15 @@ int bio_integrity_add_page(struct bio *bio, struct page *page,
 
 	iv = bip->bip_vec + bip->bip_vcnt;
 
+	if (bip->bip_vcnt) {
+		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+		struct bio_vec *iv_prev = &bip->bip_vec[bip->bip_vcnt - 1];
+
+		if (q->queue_flags & (1 << QUEUE_FLAG_SG_GAPS) &&
+		    bvec_gap_to_prev(iv_prev, offset))
+			return 0;
+	}
+
 	iv->bv_page = page;
 	iv->bv_len = len;
 	iv->bv_offset = offset;
