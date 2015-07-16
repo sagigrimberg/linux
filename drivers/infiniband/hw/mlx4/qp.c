@@ -2401,6 +2401,25 @@ static __be32 convert_access(int acc)
 		cpu_to_be32(MLX4_WQE_FMR_PERM_LOCAL_READ);
 }
 
+static void set_fastreg_seg(struct mlx4_wqe_fmr_seg *fseg, struct ib_send_wr *wr)
+{
+	struct mlx4_ib_mr *mr = to_mmr(wr->wr.fastreg.mr);
+	int i;
+
+	for (i = 0; i < mr->npages; ++i)
+		mr->mpl[i] = cpu_to_be64(mr->pl[i] | MLX4_MTT_FLAG_PRESENT);
+
+	fseg->flags		= convert_access(mr->ibmr.access);
+	fseg->mem_key		= cpu_to_be32(wr->wr.fastreg.key);
+	fseg->buf_list		= cpu_to_be64(mr->pl_map);
+	fseg->start_addr	= cpu_to_be64(mr->ibmr.iova);
+	fseg->reg_len		= cpu_to_be64(mr->ibmr.length);
+	fseg->offset		= 0; /* XXX -- is this just for ZBVA? */
+	fseg->page_size		= cpu_to_be32(PAGE_SHIFT);
+	fseg->reserved[0]	= 0;
+	fseg->reserved[1]	= 0;
+}
+
 static void set_fmr_seg(struct mlx4_wqe_fmr_seg *fseg, struct ib_send_wr *wr)
 {
 	struct mlx4_ib_fast_reg_page_list *mfrpl = to_mfrpl(wr->wr.fast_reg.page_list);
@@ -2755,6 +2774,14 @@ int mlx4_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 				ctrl->srcrb_flags |=
 					cpu_to_be32(MLX4_WQE_CTRL_STRONG_ORDER);
 				set_fmr_seg(wqe, wr);
+				wqe  += sizeof (struct mlx4_wqe_fmr_seg);
+				size += sizeof (struct mlx4_wqe_fmr_seg) / 16;
+				break;
+
+			case IB_WR_FASTREG_MR:
+				ctrl->srcrb_flags |=
+					cpu_to_be32(MLX4_WQE_CTRL_STRONG_ORDER);
+				set_fastreg_seg(wqe, wr);
 				wqe  += sizeof (struct mlx4_wqe_fmr_seg);
 				size += sizeof (struct mlx4_wqe_fmr_seg) / 16;
 				break;

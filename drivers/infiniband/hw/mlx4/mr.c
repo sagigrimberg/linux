@@ -574,3 +574,14 @@ int mlx4_ib_fmr_dealloc(struct ib_fmr *ibfmr)
 
 	return err;
 }
+
+int mlx4_ib_map_mr_sg(struct ib_mr *ibmr,
+		      struct scatterlist *sg,
+		      unsigned short sg_nents)
+{
+	struct mlx4_ib_mr *mr = to_mmr(ibmr);
+
+	return ib_sg_to_pages(sg, sg_nents, mr->max_pages,
+			      mr->pl, &mr->npages,
+			      &ibmr->length, &ibmr->iova);
+}
