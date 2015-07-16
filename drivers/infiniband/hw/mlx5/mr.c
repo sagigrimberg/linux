@@ -1165,6 +1165,35 @@ error:
 	return err;
 }
 
+static int
+mlx5_alloc_priv_descs(struct ib_device *device,
+		      struct mlx5_ib_mr *mr,
+		      int ndescs,
+		      int desc_size)
+{
+	int size = ndescs * desc_size;
+
+	mr->descs = dma_alloc_coherent(device->dma_device, size,
+				       &mr->desc_map, GFP_KERNEL);
+	if (!mr->descs)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void
+mlx5_free_priv_descs(struct mlx5_ib_mr *mr)
+{
+	struct ib_device *device = mr->ibmr.device;
+	int size = mr->max_descs * mr->desc_size;
+
+	if (mr->descs) {
+		dma_free_coherent(device->dma_device, size,
+				  mr->descs, mr->desc_map);
+		mr->descs = NULL;
+	}
+}
+
 static int clean_mr(struct mlx5_ib_mr *mr)
 {
 	struct mlx5_ib_dev *dev = to_mdev(mr->ibmr.device);
@@ -1183,6 +1212,8 @@ static int clean_mr(struct mlx5_ib_mr *mr)
 		kfree(mr->sig);
 		mr->sig = NULL;
 	}
+
+	mlx5_free_priv_descs(mr);
 
 	if (!umred) {
 		err = destroy_mkey(dev, mr);
@@ -1273,6 +1304,14 @@ struct ib_mr *mlx5_ib_alloc_mr(struct ib_pd *pd,
 	if (mr_type == IB_MR_TYPE_MEM_REG) {
 		access_mode = MLX5_ACCESS_MODE_MTT;
 		in->seg.log2_page_size = PAGE_SHIFT;
+
+		err = mlx5_alloc_priv_descs(pd->device, mr,
+					    ndescs, sizeof(u64));
+		if (err)
+			goto err_free_in;
+
+		mr->desc_size = sizeof(u64);
+		mr->max_descs = ndescs;
 	} else if (mr_type == IB_MR_TYPE_SIGNATURE) {
 		u32 psv_index[2];
 
@@ -1329,6 +1368,7 @@ err_destroy_psv:
 			mlx5_ib_warn(dev, "failed to destroy wire psv %d\n",
 				     mr->sig->psv_wire.psv_idx);
 	}
+	mlx5_free_priv_descs(mr);
 err_free_sig:
 	kfree(mr->sig);
 err_free_in:
@@ -1419,4 +1459,26 @@ int mlx5_ib_check_mr_status(struct ib_mr *ibmr, u32 check_mask,
 
 done:
 	return ret;
+}
+
+int mlx5_ib_map_mr_sg(struct ib_mr *ibmr,
+		      struct scatterlist *sg,
+		      unsigned int sg_nents)
+{
+	struct mlx5_ib_mr *mr = to_mmr(ibmr);
+	__be64 *pages;
+	int i, n;
+
+	n = ib_sg_to_pages(sg, sg_nents, mr->max_descs,
+			   ibmr, mr->descs, &mr->ndescs);
+	if (unlikely(n < 0))
+		return n;
+
+	/* Translate to HW format */
+	pages = mr->descs;
+	for (i = 0; i < mr->ndescs; i++)
+		pages[i] = (__force __be64)cpu_to_be64(pages[i] | MLX5_EN_RD |
+								  MLX5_EN_WR);
+
+	return n;
 }
