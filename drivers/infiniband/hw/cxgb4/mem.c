@@ -864,6 +864,7 @@ struct ib_mr *c4iw_alloc_mr(struct ib_pd *pd,
 	u32 mmid;
 	u32 stag = 0;
 	int ret = 0;
+	int length = roundup(max_entries * sizeof(u64), 32);
 
 	if (mr_type != IB_MR_TYPE_FAST_REG || flags)
 		return ERR_PTR(-EINVAL);
@@ -875,6 +876,14 @@ struct ib_mr *c4iw_alloc_mr(struct ib_pd *pd,
 		ret = -ENOMEM;
 		goto err;
 	}
+
+	mhp->mpl = dma_alloc_coherent(&rhp->rdev.lldi.pdev->dev,
+				      length, &mhp->mpl_addr, GFP_KERNEL);
+	if (!mhp->mpl) {
+		ret = -ENOMEM;
+		goto err_mpl;
+	}
+	mhp->max_mpl_len = length;
 
 	mhp->rhp = rhp;
 	ret = alloc_pbl(mhp, max_entries);
@@ -905,6 +914,9 @@ err2:
 	c4iw_pblpool_free(&mhp->rhp->rdev, mhp->attr.pbl_addr,
 			      mhp->attr.pbl_size << 3);
 err1:
+	dma_free_coherent(&mhp->rhp->rdev.lldi.pdev->dev,
+			  mhp->max_mpl_len, mhp->mpl, mhp->mpl_addr);
+err_mpl:
 	kfree(mhp);
 err:
 	return ERR_PTR(ret);
@@ -970,6 +982,9 @@ int c4iw_dereg_mr(struct ib_mr *ib_mr)
 	rhp = mhp->rhp;
 	mmid = mhp->attr.stag >> 8;
 	remove_handle(rhp, &rhp->mmidr, mmid);
+	if (mhp->mpl)
+		dma_free_coherent(&mhp->rhp->rdev.lldi.pdev->dev,
+				  mhp->max_mpl_len, mhp->mpl, mhp->mpl_addr);
 	dereg_mem(&rhp->rdev, mhp->attr.stag, mhp->attr.pbl_size,
 		       mhp->attr.pbl_addr);
 	if (mhp->attr.pbl_size)
