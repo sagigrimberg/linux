@@ -463,6 +463,7 @@ static int iwch_dereg_mr(struct ib_mr *ib_mr)
 		return -EINVAL;
 
 	mhp = to_iwch_mr(ib_mr);
+	kfree(mhp->pl);
 	rhp = mhp->rhp;
 	mmid = mhp->attr.stag >> 8;
 	cxio_dereg_mem(&rhp->rdev, mhp->attr.stag, mhp->attr.pbl_size,
@@ -817,6 +818,12 @@ static struct ib_mr *iwch_alloc_mr(struct ib_pd *pd,
 	if (!mhp)
 		goto err;
 
+	mhp->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
+	if (!mhp->pl) {
+		ret = -ENOMEM;
+		goto pl_err;
+	}
+
 	mhp->rhp = rhp;
 	ret = iwch_alloc_pbl(mhp, max_entries);
 	if (ret)
@@ -843,6 +850,8 @@ err3:
 err2:
 	iwch_free_pbl(mhp);
 err1:
+	kfree(mhp->pl);
+pl_err:
 	kfree(mhp);
 err:
 	return ERR_PTR(ret);
