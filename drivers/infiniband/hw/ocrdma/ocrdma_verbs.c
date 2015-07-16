@@ -3030,47 +3030,6 @@ pbl_err:
 	return ERR_PTR(-ENOMEM);
 }
 
-struct ib_mr *ocrdma_alloc_frmr(struct ib_pd *ibpd, int max_page_list_len)
-{
-	int status;
-	struct ocrdma_mr *mr;
-	struct ocrdma_pd *pd = get_ocrdma_pd(ibpd);
-	struct ocrdma_dev *dev = get_ocrdma_dev(ibpd->device);
-
-	if (max_page_list_len > dev->attr.max_pages_per_frmr)
-		return ERR_PTR(-EINVAL);
-
-	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
-	if (!mr)
-		return ERR_PTR(-ENOMEM);
-
-	status = ocrdma_get_pbl_info(dev, mr, max_page_list_len);
-	if (status)
-		goto pbl_err;
-	mr->hwmr.fr_mr = 1;
-	mr->hwmr.remote_rd = 0;
-	mr->hwmr.remote_wr = 0;
-	mr->hwmr.local_rd = 0;
-	mr->hwmr.local_wr = 0;
-	mr->hwmr.mw_bind = 0;
-	status = ocrdma_build_pbl_tbl(dev, &mr->hwmr);
-	if (status)
-		goto pbl_err;
-	status = ocrdma_reg_mr(dev, &mr->hwmr, pd->id, 0);
-	if (status)
-		goto mbx_err;
-	mr->ibmr.rkey = mr->hwmr.lkey;
-	mr->ibmr.lkey = mr->hwmr.lkey;
-	dev->stag_arr[(mr->hwmr.lkey >> 8) & (OCRDMA_MAX_STAG - 1)] =
-		(unsigned long) mr;
-	return &mr->ibmr;
-mbx_err:
-	ocrdma_free_mr_pbl_tbl(dev, &mr->hwmr);
-pbl_err:
-	kfree(mr);
-	return ERR_PTR(-ENOMEM);
-}
-
 struct ib_fast_reg_page_list *ocrdma_alloc_frmr_page_list(struct ib_device
 							  *ibdev,
 							  int page_list_len)
