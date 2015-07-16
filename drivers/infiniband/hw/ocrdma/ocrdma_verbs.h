@@ -100,6 +100,9 @@ struct ib_mr *ocrdma_alloc_mr(struct ib_pd *pd,
 			      enum ib_mr_type mr_type,
 			      u32 max_entries,
 			      u32 flags);
+int ocrdma_map_mr_sg(struct ib_mr *ibmr,
+		     struct scatterlist *sg,
+		     unsigned short sg_nents);
 struct ib_fast_reg_page_list *ocrdma_alloc_frmr_page_list(struct ib_device
 							*ibdev,
 							int page_list_len);
