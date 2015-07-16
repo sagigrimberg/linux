@@ -327,6 +327,29 @@ out:
  *
  * Return the memory region on success, otherwise return an errno.
  */
+struct ib_mr *qib_alloc_mr(struct ib_pd *pd,
+			   enum ib_mr_type mr_type,
+			   u32 max_entries,
+			   u32 flags)
+{
+	struct qib_mr *mr;
+
+	if (mr_type != IB_MR_TYPE_FAST_REG || flags)
+		return ERR_PTR(-EINVAL);
+
+	mr = alloc_mr(max_entries, pd);
+	if (IS_ERR(mr))
+		return (struct ib_mr *)mr;
+
+	return &mr->ibmr;
+}
+
+/*
+ * Allocate a memory region usable with the
+ * IB_WR_FAST_REG_MR send work request.
+ *
+ * Return the memory region on success, otherwise return an errno.
+ */
 struct ib_mr *qib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len)
 {
 	struct qib_mr *mr;
