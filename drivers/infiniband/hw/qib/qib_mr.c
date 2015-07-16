@@ -303,6 +303,7 @@ int qib_dereg_mr(struct ib_mr *ibmr)
 	int ret = 0;
 	unsigned long timeout;
 
+	kfree(mr->pl);
 	qib_free_lkey(&mr->mr);
 
 	qib_put_mr(&mr->mr); /* will set completion if last */
@@ -341,7 +342,15 @@ struct ib_mr *qib_alloc_mr(struct ib_pd *pd,
 	if (IS_ERR(mr))
 		return (struct ib_mr *)mr;
 
+	mr->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
+	if (!mr->pl)
+		goto err;
+
 	return &mr->ibmr;
+
+err:
+	qib_dereg_mr(&mr->ibmr);
+	return ERR_PTR(-ENOMEM);
 }
 
 struct ib_fast_reg_page_list *
