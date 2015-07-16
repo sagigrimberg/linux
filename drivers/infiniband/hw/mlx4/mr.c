@@ -271,10 +271,49 @@ release_mpt_entry:
 	return err;
 }
 
+static int
+mlx4_alloc_page_list(struct ib_device *device,
+		     struct mlx4_ib_mr *mr,
+		      int max_entries)
+{
+	int size = max_entries * sizeof (u64);
+
+	mr->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
+	if (!mr->pl)
+		return -ENOMEM;
+
+	mr->mpl = dma_alloc_coherent(device->dma_device, size,
+				     &mr->pl_map, GFP_KERNEL);
+	if (!mr->mpl)
+		goto err;
+
+	return 0;
+err:
+	kfree(mr->pl);
+
+	return -ENOMEM;
+}
+
+static void
+mlx4_free_page_list(struct mlx4_ib_mr *mr)
+{
+	struct ib_device *device = mr->ibmr.device;
+	int size = mr->max_pages * sizeof(u64);
+
+	kfree(mr->pl);
+	if (mr->mpl)
+		dma_free_coherent(device->dma_device, size,
+				  mr->mpl, mr->pl_map);
+	mr->pl = NULL;
+	mr->mpl = NULL;
+}
+
 int mlx4_ib_dereg_mr(struct ib_mr *ibmr)
 {
 	struct mlx4_ib_mr *mr = to_mmr(ibmr);
 	int ret;
+
+	mlx4_free_page_list(mr);
 
 	ret = mlx4_mr_free(to_mdev(ibmr->device)->dev, &mr->mmr);
 	if (ret)
@@ -371,18 +410,25 @@ struct ib_mr *mlx4_ib_alloc_mr(struct ib_pd *pd,
 	if (err)
 		goto err_free;
 
+	err = mlx4_alloc_page_list(pd->device, mr, max_entries);
+	if (err)
+		goto err_free_mr;
+
+	mr->max_pages = max_entries;
+
 	err = mlx4_mr_enable(dev->dev, &mr->mmr);
 	if (err)
-		goto err_mr;
+		goto err_free_pl;
 
 	mr->ibmr.rkey = mr->ibmr.lkey = mr->mmr.key;
 	mr->umem = NULL;
 
 	return &mr->ibmr;
 
-err_mr:
+err_free_pl:
+	mlx4_free_page_list(mr);
+err_free_mr:
 	(void) mlx4_mr_free(dev->dev, &mr->mmr);
-
 err_free:
 	kfree(mr);
 	return ERR_PTR(err);

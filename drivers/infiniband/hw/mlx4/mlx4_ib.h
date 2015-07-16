@@ -120,6 +120,11 @@ struct mlx4_ib_mr {
 	struct ib_mr		ibmr;
 	struct mlx4_mr		mmr;
 	struct ib_umem	       *umem;
+	u64		        *pl;
+	__be64			*mpl;
+	dma_addr_t		pl_map;
+	u32			npages;
+	u32			max_pages;
 };
 
 struct mlx4_ib_mw {
