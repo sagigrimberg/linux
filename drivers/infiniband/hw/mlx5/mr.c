@@ -1471,3 +1471,14 @@ int mlx5_ib_check_mr_status(struct ib_mr *ibmr, u32 check_mask,
 done:
 	return ret;
 }
+
+int mlx5_ib_map_mr_sg(struct ib_mr *ibmr,
+		      struct scatterlist *sg,
+		      unsigned short sg_nents)
+{
+	struct mlx5_ib_mr *mr = to_mmr(ibmr);
+
+	return ib_sg_to_pages(sg, sg_nents, mr->max_descs,
+			      mr->pl, &mr->ndescs,
+			      &ibmr->length, &ibmr->iova);
+}

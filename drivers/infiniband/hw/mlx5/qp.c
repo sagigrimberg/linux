@@ -65,6 +65,7 @@ static const u32 mlx5_ib_opcode[] = {
 	[IB_WR_SEND_WITH_INV]			= MLX5_OPCODE_SEND_INVAL,
 	[IB_WR_LOCAL_INV]			= MLX5_OPCODE_UMR,
 	[IB_WR_FAST_REG_MR]			= MLX5_OPCODE_UMR,
+	[IB_WR_FASTREG_MR]			= MLX5_OPCODE_UMR,
 	[IB_WR_MASKED_ATOMIC_CMP_AND_SWP]	= MLX5_OPCODE_ATOMIC_MASKED_CS,
 	[IB_WR_MASKED_ATOMIC_FETCH_AND_ADD]	= MLX5_OPCODE_ATOMIC_MASKED_FA,
 	[MLX5_IB_WR_UMR]			= MLX5_OPCODE_UMR,
@@ -1903,6 +1904,17 @@ static __be64 sig_mkey_mask(void)
 	return cpu_to_be64(result);
 }
 
+static void set_fastreg_umr_seg(struct mlx5_wqe_umr_ctrl_seg *umr,
+				struct mlx5_ib_mr *mr)
+{
+	int ndescs = mr->ndescs;
+
+	memset(umr, 0, sizeof(*umr));
+	umr->flags = MLX5_UMR_CHECK_NOT_FREE;
+	umr->klm_octowords = get_klm_octo(ndescs);
+	umr->mkey_mask = frwr_mkey_mask();
+}
+
 static void set_frwr_umr_segment(struct mlx5_wqe_umr_ctrl_seg *umr,
 				 struct ib_send_wr *wr, int li)
 {
@@ -1994,6 +2006,23 @@ static u8 get_umr_flags(int acc)
 		MLX5_PERM_LOCAL_READ | MLX5_PERM_UMR_EN;
 }
 
+static void set_fastreg_mkey_seg(struct mlx5_mkey_seg *seg,
+				 struct mlx5_ib_mr *mr, u32 key,
+				 int *writ)
+{
+	int ndescs = ALIGN(mr->ndescs, 8) >> 1;
+
+	memset(seg, 0, sizeof(*seg));
+	seg->flags = get_umr_flags(mr->ibmr.access) | MLX5_ACCESS_MODE_MTT;
+	*writ = seg->flags & (MLX5_PERM_LOCAL_WRITE | IB_ACCESS_REMOTE_WRITE);
+	seg->qpn_mkey7_0 = cpu_to_be32((key & 0xff) | 0xffffff00);
+	seg->flags_pd = cpu_to_be32(MLX5_MKEY_REMOTE_INVAL);
+	seg->start_addr = cpu_to_be64(mr->ibmr.iova);
+	seg->len = cpu_to_be64(mr->ibmr.length);
+	seg->xlt_oct_size = cpu_to_be32(ndescs);
+	seg->log2_page_size = PAGE_SHIFT;
+}
+
 static void set_mkey_segment(struct mlx5_mkey_seg *seg, struct ib_send_wr *wr,
 			     int li, int *writ)
 {
@@ -2033,6 +2062,23 @@ static void set_reg_mkey_segment(struct mlx5_mkey_seg *seg, struct ib_send_wr *w
 	seg->log2_page_size = umrwr->page_shift;
 	seg->qpn_mkey7_0 = cpu_to_be32(0xffffff00 |
 				       mlx5_mkey_variant(umrwr->mkey));
+}
+
+static void set_fastreg_ds(struct mlx5_wqe_data_seg *dseg,
+			   struct mlx5_ib_mr *mr,
+			   struct mlx5_ib_pd *pd,
+			   int writ)
+{
+	u64 perm = MLX5_EN_RD | (writ ? MLX5_EN_WR : 0);
+	int bcount = sizeof(u64) * mr->ndescs;
+	int i;
+
+	for (i = 0; i < mr->ndescs; i++)
+		mr->mpl[i] = cpu_to_be64(mr->pl[i] | perm);
+
+	dseg->addr = cpu_to_be64(mr->pl_map);
+	dseg->byte_count = cpu_to_be32(ALIGN(bcount, 64));
+	dseg->lkey = cpu_to_be32(pd->pa_lkey);
 }
 
 static void set_frwr_pages(struct mlx5_wqe_data_seg *dseg,
@@ -2440,6 +2486,37 @@ static int set_psv_wr(struct ib_sig_domain *domain,
 	return 0;
 }
 
+static int set_fastreg_wr(struct mlx5_ib_qp *qp,
+			  struct ib_send_wr *wr,
+			  void **seg, int *size)
+{
+	struct mlx5_ib_mr *mr = to_mmr(wr->wr.fastreg.mr);
+	struct mlx5_ib_pd *pd = to_mpd(qp->ibqp.pd);
+	u32 key = wr->wr.fastreg.key;
+	int writ = 0;
+
+	if (unlikely(wr->send_flags & IB_SEND_INLINE))
+		return -EINVAL;
+
+	set_fastreg_umr_seg(*seg, mr);
+	*seg += sizeof(struct mlx5_wqe_umr_ctrl_seg);
+	*size += sizeof(struct mlx5_wqe_umr_ctrl_seg) / 16;
+	if (unlikely((*seg == qp->sq.qend)))
+		*seg = mlx5_get_send_wqe(qp, 0);
+
+	set_fastreg_mkey_seg(*seg, mr, key, &writ);
+	*seg += sizeof(struct mlx5_mkey_seg);
+	*size += sizeof(struct mlx5_mkey_seg) / 16;
+	if (unlikely((*seg == qp->sq.qend)))
+		*seg = mlx5_get_send_wqe(qp, 0);
+
+	set_fastreg_ds(*seg, mr, pd, writ);
+	*seg += sizeof(struct mlx5_wqe_data_seg);
+	*size += (sizeof(struct mlx5_wqe_data_seg) / 16);
+
+	return 0;
+}
+
 static int set_frwr_li_wr(void **seg, struct ib_send_wr *wr, int *size,
 			  struct mlx5_core_dev *mdev, struct mlx5_ib_pd *pd, struct mlx5_ib_qp *qp)
 {
@@ -2675,6 +2752,19 @@ int mlx5_ib_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 				qp->sq.wr_data[idx] = IB_WR_FAST_REG_MR;
 				ctrl->imm = cpu_to_be32(wr->wr.fast_reg.rkey);
 				err = set_frwr_li_wr(&seg, wr, &size, mdev, to_mpd(ibqp->pd), qp);
+				if (err) {
+					mlx5_ib_warn(dev, "\n");
+					*bad_wr = wr;
+					goto out;
+				}
+				num_sge = 0;
+				break;
+
+			case IB_WR_FASTREG_MR:
+				next_fence = MLX5_FENCE_MODE_INITIATOR_SMALL;
+				qp->sq.wr_data[idx] = IB_WR_FASTREG_MR;
+				ctrl->imm = cpu_to_be32(wr->wr.fastreg.key);
+				err = set_fastreg_wr(qp, wr, &seg, &size);
 				if (err) {
 					mlx5_ib_warn(dev, "\n");
 					*bad_wr = wr;
