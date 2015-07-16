@@ -1039,12 +1039,17 @@ struct ib_mr *qib_alloc_mr(struct ib_pd *pd,
 			   u32 max_entries,
 			   u32 flags);
 
+int qib_map_mr_sg(struct ib_mr *ibmr,
+		  struct scatterlist *sg,
+		  unsigned short sg_nents);
+
 struct ib_fast_reg_page_list *qib_alloc_fast_reg_page_list(
 				struct ib_device *ibdev, int page_list_len);
 
 void qib_free_fast_reg_page_list(struct ib_fast_reg_page_list *pl);
 
 int qib_fast_reg_mr(struct qib_qp *qp, struct ib_send_wr *wr);
+int qib_fastreg_mr(struct qib_qp *qp, struct ib_send_wr *wr);
 
 struct ib_fmr *qib_alloc_fmr(struct ib_pd *pd, int mr_access_flags,
 			     struct ib_fmr_attr *fmr_attr);

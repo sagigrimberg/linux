@@ -353,6 +353,17 @@ err:
 	return ERR_PTR(-ENOMEM);
 }
 
+int qib_map_mr_sg(struct ib_mr *ibmr,
+		  struct scatterlist *sg,
+		  unsigned short sg_nents)
+{
+	struct qib_mr *mr = to_imr(ibmr);
+
+	return ib_sg_to_pages(sg, sg_nents, mr->mr.max_segs,
+			      mr->pl, &mr->npages,
+			      &ibmr->length, &ibmr->iova);
+}
+
 struct ib_fast_reg_page_list *
 qib_alloc_fast_reg_page_list(struct ib_device *ibdev, int page_list_len)
 {
