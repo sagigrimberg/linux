@@ -957,6 +957,7 @@ int ocrdma_dereg_mr(struct ib_mr *ib_mr)
 
 	(void) ocrdma_mbx_dealloc_lkey(dev, mr->hwmr.fr_mr, mr->hwmr.lkey);
 
+	kfree(mr->pl);
 	ocrdma_free_mr_pbl_tbl(dev, &mr->hwmr);
 
 	/* it could be user registered memory. */
@@ -3003,6 +3004,12 @@ struct ib_mr *ocrdma_alloc_mr(struct ib_pd *ibpd,
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
+	mr->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
+	if (!mr->pl) {
+		status = -ENOMEM;
+		goto pl_err;
+	}
+
 	status = ocrdma_get_pbl_info(dev, mr, max_entries);
 	if (status)
 		goto pbl_err;
@@ -3026,6 +3033,8 @@ struct ib_mr *ocrdma_alloc_mr(struct ib_pd *ibpd,
 mbx_err:
 	ocrdma_free_mr_pbl_tbl(dev, &mr->hwmr);
 pbl_err:
+	kfree(mr->pl);
+pl_err:
 	kfree(mr);
 	return ERR_PTR(-ENOMEM);
 }
