@@ -853,6 +853,63 @@ int c4iw_dealloc_mw(struct ib_mw *mw)
 	return 0;
 }
 
+struct ib_mr *c4iw_alloc_mr(struct ib_pd *pd,
+			    enum ib_mr_type mr_type,
+			    u32 max_entries,
+			    u32 flags)
+{
+	struct c4iw_dev *rhp;
+	struct c4iw_pd *php;
+	struct c4iw_mr *mhp;
+	u32 mmid;
+	u32 stag = 0;
+	int ret = 0;
+
+	if (mr_type != IB_MR_TYPE_FAST_REG || flags)
+		return ERR_PTR(-EINVAL);
+
+	php = to_c4iw_pd(pd);
+	rhp = php->rhp;
+	mhp = kzalloc(sizeof(*mhp), GFP_KERNEL);
+	if (!mhp) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	mhp->rhp = rhp;
+	ret = alloc_pbl(mhp, max_entries);
+	if (ret)
+		goto err1;
+	mhp->attr.pbl_size = max_entries;
+	ret = allocate_stag(&rhp->rdev, &stag, php->pdid,
+				 mhp->attr.pbl_size, mhp->attr.pbl_addr);
+	if (ret)
+		goto err2;
+	mhp->attr.pdid = php->pdid;
+	mhp->attr.type = FW_RI_STAG_NSMR;
+	mhp->attr.stag = stag;
+	mhp->attr.state = 1;
+	mmid = (stag) >> 8;
+	mhp->ibmr.rkey = mhp->ibmr.lkey = stag;
+	if (insert_handle(rhp, &rhp->mmidr, mhp, mmid)) {
+		ret = -ENOMEM;
+		goto err3;
+	}
+
+	PDBG("%s mmid 0x%x mhp %p stag 0x%x\n", __func__, mmid, mhp, stag);
+	return &(mhp->ibmr);
+err3:
+	dereg_mem(&rhp->rdev, stag, mhp->attr.pbl_size,
+		       mhp->attr.pbl_addr);
+err2:
+	c4iw_pblpool_free(&mhp->rhp->rdev, mhp->attr.pbl_addr,
+			      mhp->attr.pbl_size << 3);
+err1:
+	kfree(mhp);
+err:
+	return ERR_PTR(ret);
+}
+
 struct ib_mr *c4iw_alloc_fast_reg_mr(struct ib_pd *pd, int pbl_depth)
 {
 	struct c4iw_dev *rhp;
