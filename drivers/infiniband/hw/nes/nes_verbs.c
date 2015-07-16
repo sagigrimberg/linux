@@ -51,6 +51,7 @@ atomic_t qps_created;
 atomic_t sw_qps_destroyed;
 
 static void nes_unregister_ofa_device(struct nes_ib_device *nesibdev);
+static int nes_dereg_mr(struct ib_mr *ib_mr);
 
 /**
  * nes_alloc_mw
@@ -443,7 +444,25 @@ static struct ib_mr *nes_alloc_mr(struct ib_pd *ibpd,
 		nes_free_resource(nesadapter, nesadapter->allocated_mrs, stag_index);
 		ibmr = ERR_PTR(-ENOMEM);
 	}
+
+	nesmr->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
+	if (!nesmr->pl)
+		goto err;
+
+	nesmr->mpl = pci_alloc_consistent(nesdev->pcidev,
+					  max_entries * sizeof(u64),
+					  &nesmr->mpl_addr);
+	if (!nesmr->mpl_addr)
+		goto err;
+
+	nesmr->max_pages = max_entries;
+
 	return ibmr;
+
+err:
+	nes_dereg_mr(ibmr);
+
+	return ERR_PTR(-ENOMEM);
 }
 
 /*
@@ -2680,6 +2699,14 @@ static int nes_dereg_mr(struct ib_mr *ib_mr)
 	int ret;
 	u16 major_code;
 	u16 minor_code;
+
+
+	kfree(nesmr->pl);
+	if (nesmr->mpl)
+		pci_free_consistent(nesdev->pcidev,
+				    nesmr->max_pages * sizeof(u64),
+				    nesmr->mpl,
+				    nesmr->mpl_addr);
 
 	if (nesmr->region) {
 		ib_umem_release(nesmr->region);
