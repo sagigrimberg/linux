@@ -857,6 +857,17 @@ err:
 	return ERR_PTR(ret);
 }
 
+static int iwch_map_mr_sg(struct ib_mr *ibmr,
+			  struct scatterlist *sg,
+			  unsigned short sg_nents)
+{
+	struct iwch_mr *mhp = to_iwch_mr(ibmr);
+
+	return ib_sg_to_pages(sg, sg_nents, mhp->attr.pbl_size,
+			      mhp->pl, &mhp->npages,
+			      &ibmr->length, &ibmr->iova);
+}
+
 static struct ib_fast_reg_page_list *iwch_alloc_fastreg_pbl(
 					struct ib_device *device,
 					int page_list_len)
@@ -1455,6 +1466,7 @@ int iwch_register_device(struct iwch_dev *dev)
 	dev->ibdev.bind_mw = iwch_bind_mw;
 	dev->ibdev.dealloc_mw = iwch_dealloc_mw;
 	dev->ibdev.alloc_mr = iwch_alloc_mr;
+	dev->ibdev.map_mr_sg = iwch_map_mr_sg;
 	dev->ibdev.alloc_fast_reg_page_list = iwch_alloc_fastreg_pbl;
 	dev->ibdev.free_fast_reg_page_list = iwch_free_fastreg_pbl;
 	dev->ibdev.attach_mcast = iwch_multicast_attach;
