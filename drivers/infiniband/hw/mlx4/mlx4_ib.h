@@ -680,6 +680,10 @@ struct ib_mw *mlx4_ib_alloc_mw(struct ib_pd *pd, enum ib_mw_type type);
 int mlx4_ib_bind_mw(struct ib_qp *qp, struct ib_mw *mw,
 		    struct ib_mw_bind *mw_bind);
 int mlx4_ib_dealloc_mw(struct ib_mw *mw);
+struct ib_mr *mlx4_ib_alloc_mr(struct ib_pd *pd,
+			       enum ib_mr_type mr_type,
+			       u32 max_entries,
+			       u32 flags);
 struct ib_mr *mlx4_ib_alloc_fast_reg_mr(struct ib_pd *pd,
 					int max_page_list_len);
 struct ib_fast_reg_page_list *mlx4_ib_alloc_fast_reg_page_list(struct ib_device *ibdev,
