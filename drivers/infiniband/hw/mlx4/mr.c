@@ -59,7 +59,7 @@ struct ib_mr *mlx4_ib_get_dma_mr(struct ib_pd *pd, int acc)
 	struct mlx4_ib_mr *mr;
 	int err;
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
@@ -140,7 +140,7 @@ struct ib_mr *mlx4_ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 	int err;
 	int n;
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
@@ -271,10 +271,40 @@ release_mpt_entry:
 	return err;
 }
 
+static int
+mlx4_alloc_priv_pages(struct ib_device *device,
+		      struct mlx4_ib_mr *mr,
+		      int max_pages)
+{
+	int size = max_pages * sizeof(u64);
+
+	mr->pages = dma_alloc_coherent(device->dma_device, size,
+				       &mr->page_map, GFP_KERNEL);
+	if (!mr->pages)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void
+mlx4_free_priv_pages(struct mlx4_ib_mr *mr)
+{
+	struct ib_device *device = mr->ibmr.device;
+	int size = mr->max_pages * sizeof(u64);
+
+	if (mr->pages) {
+		dma_free_coherent(device->dma_device, size,
+				  mr->pages, mr->page_map);
+		mr->pages = NULL;
+	}
+}
+
 int mlx4_ib_dereg_mr(struct ib_mr *ibmr)
 {
 	struct mlx4_ib_mr *mr = to_mmr(ibmr);
 	int ret;
+
+	mlx4_free_priv_pages(mr);
 
 	ret = mlx4_mr_free(to_mdev(ibmr->device)->dev, &mr->mmr);
 	if (ret)
@@ -362,7 +392,7 @@ struct ib_mr *mlx4_ib_alloc_mr(struct ib_pd *pd,
 	    max_num_sg > MLX4_MAX_FAST_REG_PAGES)
 		return ERR_PTR(-EINVAL);
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
@@ -371,18 +401,25 @@ struct ib_mr *mlx4_ib_alloc_mr(struct ib_pd *pd,
 	if (err)
 		goto err_free;
 
+	err = mlx4_alloc_priv_pages(pd->device, mr, max_num_sg);
+	if (err)
+		goto err_free_mr;
+
+	mr->max_pages = max_num_sg;
+
 	err = mlx4_mr_enable(dev->dev, &mr->mmr);
 	if (err)
-		goto err_mr;
+		goto err_free_pl;
 
 	mr->ibmr.rkey = mr->ibmr.lkey = mr->mmr.key;
 	mr->umem = NULL;
 
 	return &mr->ibmr;
 
-err_mr:
+err_free_pl:
+	mlx4_free_priv_pages(mr);
+err_free_mr:
 	(void) mlx4_mr_free(dev->dev, &mr->mmr);
-
 err_free:
 	kfree(mr);
 	return ERR_PTR(err);
@@ -527,4 +564,27 @@ int mlx4_ib_fmr_dealloc(struct ib_fmr *ibfmr)
 		kfree(ifmr);
 
 	return err;
+}
+
+static int mlx4_set_page(struct ib_mr *ibmr, u64 addr)
+{
+	struct mlx4_ib_mr *mr = to_mmr(ibmr);
+
+	if (unlikely(mr->npages == mr->max_pages))
+		return -ENOMEM;
+
+	mr->pages[mr->npages++] = cpu_to_be64(addr | MLX4_MTT_FLAG_PRESENT);
+
+	return 0;
+}
+
+int mlx4_ib_map_mr_sg(struct ib_mr *ibmr,
+		      struct scatterlist *sg,
+		      unsigned int sg_nents)
+{
+	struct mlx4_ib_mr *mr = to_mmr(ibmr);
+
+	mr->npages = 0;
+
+	return ib_sg_to_pages(ibmr, sg, sg_nents, mlx4_set_page);
 }
