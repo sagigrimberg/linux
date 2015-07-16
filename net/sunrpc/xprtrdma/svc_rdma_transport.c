@@ -738,7 +738,7 @@ static struct svc_rdma_fastreg_mr *rdma_alloc_frmr(struct svcxprt_rdma *xprt)
 	if (!frmr)
 		goto err;
 
-	mr = ib_alloc_fast_reg_mr(xprt->sc_pd, RPCSVC_MAXPAGES);
+	mr = ib_alloc_mr(xprt->sc_pd, IB_MR_TYPE_FAST_REG, RPCSVC_MAXPAGES, 0);
 	if (IS_ERR(mr))
 		goto err_free_frmr;
 
