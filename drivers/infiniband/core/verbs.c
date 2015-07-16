@@ -1469,3 +1469,114 @@ int ib_check_mr_status(struct ib_mr *mr, u32 check_mask,
 		mr->device->check_mr_status(mr, check_mask, mr_status) : -ENOSYS;
 }
 EXPORT_SYMBOL(ib_check_mr_status);
+
+/**
+ * ib_map_mr_sg() - Map a memory region with the largest prefix of
+ *     a dma mapped SG list
+ * @mr:            memory region
+ * @sg:            dma mapped scatterlist
+ * @sg_nents:      number of entries in sg
+ *
+ * Constraints:
+ * - If sg_nents exceeds the mr max_num_sge, then only max_num_sg entries
+ *   will be mapped.
+ * - The first sg element is allowed to have an offset.
+ * - Each sg element must be aligned to PAGE_SIZE (or physically
+ *   contiguous to the previous element). In case an sg element has a
+ *   non contiguous offset, the mapping prefix will not include it.
+ * - The last sg element is allowed to have length less than PAGE_SIZE.
+ *
+ * On success returns the number of sg elements that were mapped.
+ *
+ * After this completes successfully, the  memory region
+ * is ready for registration.
+ */
+int ib_map_mr_sg(struct ib_mr *mr,
+		 struct scatterlist *sg,
+		 unsigned int sg_nents)
+{
+	if (unlikely(!mr->device->map_mr_sg))
+		return -ENOSYS;
+
+	return mr->device->map_mr_sg(mr, sg, sg_nents);
+}
+EXPORT_SYMBOL(ib_map_mr_sg);
+
+/**
+ * ib_sg_to_pages() - Convert a sg list to a page vector
+ * @sgl:           dma mapped scatterlist
+ * @sg_nents:      number of entries in sg
+ * @max_pages:     maximum pages allowed
+ * @mr:            memory region
+ * @pages:         output page vector
+ * @npages:        output number of mapped pages
+ *
+ * Core service helper for drivers to covert the largest
+ * prefix of given sg list to a page vector. The sg list
+ * prefix converted is the prefix that meet the requirements
+ * of ib_map_mr_sg.
+ *
+ * On success returns the number of sg elements that were assigned to
+ * a page vector.
+ */
+int ib_sg_to_pages(struct scatterlist *sgl,
+		   unsigned int sg_nents,
+		   unsigned int max_pages,
+		   struct ib_mr *mr,
+		   u64 *pages, u32 *npages)
+{
+	struct scatterlist *sg;
+	u64 last_end_dma_addr = 0, last_page_addr = 0;
+	unsigned int last_page_off = 0;
+	int i, j = 0;
+
+	/* TODO: We can do better with huge pages */
+
+	mr->iova = sg_dma_address(&sgl[0]);
+	mr->length = 0;
+
+	for_each_sg(sgl, sg, sg_nents, i) {
+		u64 dma_addr = sg_dma_address(sg);
+		unsigned int dma_len = sg_dma_len(sg);
+		u64 end_dma_addr = dma_addr + dma_len;
+		u64 page_addr = dma_addr & PAGE_MASK;
+
+		if (unlikely(j > max_pages))
+			/* we ran out of pages */
+			goto done;
+
+		if (i && page_addr != dma_addr) {
+			if (last_end_dma_addr != dma_addr) {
+				/* gap */
+				goto done;
+
+			} else if (last_page_off + dma_len < PAGE_SIZE) {
+				/* chunk this fragment with the last */
+				last_end_dma_addr += dma_len;
+				last_page_off += dma_len;
+				mr->length += dma_len;
+				continue;
+			} else {
+				/* map starting from the next page */
+				page_addr = last_page_addr + PAGE_SIZE;
+				dma_len -= PAGE_SIZE - last_page_off;
+			}
+		}
+
+		do {
+			pages[j++] = page_addr;
+			page_addr += PAGE_SIZE;
+		} while (page_addr < end_dma_addr && likely(j < max_pages));
+
+		mr->length += dma_len;
+		last_end_dma_addr = end_dma_addr;
+		last_page_addr = end_dma_addr & PAGE_MASK;
+		last_page_off = end_dma_addr & ~PAGE_MASK;
+	}
+
+done:
+	*npages = j;
+
+	return i;
+}
+EXPORT_SYMBOL(ib_sg_to_pages);
