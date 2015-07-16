@@ -922,6 +922,17 @@ err:
 	return ERR_PTR(ret);
 }
 
+int c4iw_map_mr_sg(struct ib_mr *ibmr,
+		   struct scatterlist *sg,
+		   unsigned short sg_nents)
+{
+	struct c4iw_mr *mhp = to_c4iw_mr(ibmr);
+
+	return ib_sg_to_pages(sg, sg_nents, mhp->max_mpl_len,
+			      mhp->mpl, &mhp->mpl_len,
+			      &ibmr->length, &ibmr->iova);
+}
+
 struct ib_fast_reg_page_list *c4iw_alloc_fastreg_pbl(struct ib_device *device,
 						     int page_list_len)
 {
