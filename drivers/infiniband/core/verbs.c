@@ -1481,3 +1481,126 @@ int ib_check_mr_status(struct ib_mr *mr, u32 check_mask,
 		mr->device->check_mr_status(mr, check_mask, mr_status) : -ENOSYS;
 }
 EXPORT_SYMBOL(ib_check_mr_status);
+
+
+/**
+ * ib_map_mr_sg() - Populates MR with a dma mapped SG list
+ * @mr:            memory region
+ * @sg:            dma mapped scatterlist
+ * @sg_nents:      number of entries in sg
+ * @access:        access permissions
+ *
+ * After this completes successfully, the memory region is ready
+ * for fast registration.
+ */
+int ib_map_mr_sg(struct ib_mr *mr,
+		 struct scatterlist *sg,
+		 unsigned short sg_nents,
+		 unsigned int access)
+{
+	int rc;
+
+	if (!mr->device->map_mr_sg)
+		return -ENOSYS;
+
+	rc = mr->device->map_mr_sg(mr, sg, sg_nents);
+	if (!rc)
+		mr->access = access;
+
+	return rc;
+}
+EXPORT_SYMBOL(ib_map_mr_sg);
+
+/**
+ * ib_sg_to_pages() - Convert a sg list to a page vector
+ * @dev:           ib device
+ * @sgl:           dma mapped scatterlist
+ * @sg_nents:      number of entries in sg
+ * @max_pages:     maximum pages allowed
+ * @pages:         output page vector
+ * @npages:        output number of mapped pages
+ * @length:        output total byte length
+ * @offset:        output first byte offset
+ *
+ * Core service helper for drivers to convert a scatter
+ * list to a page vector. The assumption is that the
+ * sg must meet the following conditions:
+ * - Only the first sg is allowed to have an offset
+ * - All the elements are of the same size - PAGE_SIZE
+ * - The last element is allowed to have length less than
+ *   PAGE_SIZE
+ *
+ * If any of those conditions is not met, the routine will
+ * fail with EINVAL.
+ */
+int ib_sg_to_pages(struct scatterlist *sgl,
+		   unsigned short sg_nents,
+		   unsigned short max_pages,
+		   u64 *pages, u32 *npages,
+		   u32 *length, u64 *offset)
+{
+	struct scatterlist *sg;
+	u64 last_end_dma_addr = 0, last_page_addr = 0;
+	unsigned int last_page_off = 0;
+	int i, j = 0;
+
+	/* TODO: We can do better with huge pages */
+
+	*offset = sg_dma_address(&sgl[0]);
+	*length = 0;
+
+	for_each_sg(sgl, sg, sg_nents, i) {
+		u64 dma_addr = sg_dma_address(sg);
+		unsigned int dma_len = sg_dma_len(sg);
+		u64 end_dma_addr = dma_addr + dma_len;
+		u64 page_addr = dma_addr & PAGE_MASK;
+
+		*length += dma_len;
+
+		/* Fail we ran out of pages */
+		if (unlikely(j > max_pages))
+			return -EINVAL;
+
+		if (i && sg->offset) {
+			if (unlikely((last_end_dma_addr) != dma_addr)) {
+				/* gap - fail */
+				goto err;
+			}
+			if (last_page_off + dma_len < PAGE_SIZE) {
+				/* chunk this fragment with the last */
+				last_end_dma_addr += dma_len;
+				last_page_off += dma_len;
+				continue;
+			} else {
+				/* map starting from the next page */
+				page_addr = last_page_addr + PAGE_SIZE;
+				dma_len -= PAGE_SIZE - last_page_off;
+			}
+		}
+
+		do {
+			pages[j++] = page_addr;
+			page_addr += PAGE_SIZE;
+		} while (page_addr < end_dma_addr);
+
+		last_end_dma_addr = end_dma_addr;
+		last_page_addr = end_dma_addr & PAGE_MASK;
+		last_page_off = end_dma_addr & ~PAGE_MASK;
+	}
+
+	*npages = j;
+
+	return 0;
+err:
+	pr_err("RDMA alignment violation\n");
+	for_each_sg(sgl, sg, sg_nents, i) {
+		u64 dma_addr = sg_dma_address(sg);
+		unsigned int dma_len = sg_dma_len(sg);
+
+		pr_err("sg[%d]: offset=0x%x, dma_addr=0x%llx, dma_len=0x%x\n",
+			i, sg->offset, dma_addr, dma_len);
+	}
+
+	return -EINVAL;
+}
+EXPORT_SYMBOL(ib_sg_to_pages);

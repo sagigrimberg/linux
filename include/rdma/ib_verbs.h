@@ -1013,6 +1013,7 @@ enum ib_wr_opcode {
 	IB_WR_RDMA_READ_WITH_INV,
 	IB_WR_LOCAL_INV,
 	IB_WR_FAST_REG_MR,
+	IB_WR_FASTREG_MR,
 	IB_WR_MASKED_ATOMIC_CMP_AND_SWP,
 	IB_WR_MASKED_ATOMIC_FETCH_AND_ADD,
 	IB_WR_BIND_MW,
@@ -1116,6 +1117,10 @@ struct ib_send_wr {
 			int				access_flags;
 			u32				rkey;
 		} fast_reg;
+		struct {
+			struct ib_mr *mr;
+			u32          key;
+		} fastreg;
 		struct {
 			struct ib_mw            *mw;
 			/* The new rkey for the memory window. */
@@ -1316,6 +1321,9 @@ struct ib_mr {
 	struct ib_uobject *uobject;
 	u32		   lkey;
 	u32		   rkey;
+	int		   access;
+	u64		   iova;
+	u32		   length;
 	atomic_t	   usecnt; /* count number of MWs */
 };
 
@@ -1661,6 +1669,9 @@ struct ib_device {
 					       enum ib_mr_type mr_type,
 					       u32 max_entries,
 					       u32 flags);
+	int                        (*map_mr_sg)(struct ib_mr *mr,
+						struct scatterlist *sg,
+						unsigned short sg_nents);
 	struct ib_fast_reg_page_list * (*alloc_fast_reg_page_list)(struct ib_device *device,
 								   int page_list_len);
 	void			   (*free_fast_reg_page_list)(struct ib_fast_reg_page_list *page_list);
@@ -2990,5 +3001,31 @@ static inline int ib_check_mr_access(int flags)
  */
 int ib_check_mr_status(struct ib_mr *mr, u32 check_mask,
 		       struct ib_mr_status *mr_status);
+
+int ib_map_mr_sg(struct ib_mr *mr,
+		 struct scatterlist *sg,
+		 unsigned short sg_nents,
+		 unsigned int access);
+
+int ib_sg_to_pages(struct scatterlist *sgl,
+		   unsigned short sg_nents,
+		   unsigned short max_pages,
+		   u64 *pages, u32 *npages,
+		   u32 *length, u64 *offset);
+
+static inline void
+ib_set_fastreg_wr(struct ib_mr *mr,
+		  u32 key,
+		  uintptr_t wr_id,
+		  bool signaled,
+		  struct ib_send_wr *wr)
+{
+	wr->opcode = IB_WR_FASTREG_MR;
+	wr->wr_id = wr_id;
+	wr->send_flags = signaled ? IB_SEND_SIGNALED : 0;
+	wr->num_sge = 0;
+	wr->wr.fastreg.mr = mr;
+	wr->wr.fastreg.key = key;
+}
 
 #endif /* IB_VERBS_H */
