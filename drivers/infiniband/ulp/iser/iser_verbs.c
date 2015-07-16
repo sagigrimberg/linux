@@ -296,7 +296,7 @@ iser_alloc_reg_res(struct ib_device *ib_device,
 		return PTR_ERR(res->frpl);
 	}
 
-	res->mr = ib_alloc_fast_reg_mr(pd, size);
+	res->mr = ib_alloc_mr(pd, IB_MR_TYPE_FAST_REG, size, 0);
 	if (IS_ERR(res->mr)) {
 		ret = PTR_ERR(res->mr);
 		iser_err("Failed to allocate ib_fast_reg_mr err=%d\n", ret);
