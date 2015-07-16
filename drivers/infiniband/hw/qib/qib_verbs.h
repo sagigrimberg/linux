@@ -1037,8 +1037,6 @@ struct ib_mr *qib_alloc_mr(struct ib_pd *pd,
 			   u32 max_entries,
 			   u32 flags);
 
-struct ib_mr *qib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len);
-
 struct ib_fast_reg_page_list *qib_alloc_fast_reg_page_list(
 				struct ib_device *ibdev, int page_list_len);
 

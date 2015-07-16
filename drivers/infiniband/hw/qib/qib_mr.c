@@ -344,23 +344,6 @@ struct ib_mr *qib_alloc_mr(struct ib_pd *pd,
 	return &mr->ibmr;
 }
 
-/*
- * Allocate a memory region usable with the
- * IB_WR_FAST_REG_MR send work request.
- *
- * Return the memory region on success, otherwise return an errno.
- */
-struct ib_mr *qib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len)
-{
-	struct qib_mr *mr;
-
-	mr = alloc_mr(max_page_list_len, pd);
-	if (IS_ERR(mr))
-		return (struct ib_mr *)mr;
-
-	return &mr->ibmr;
-}
-
 struct ib_fast_reg_page_list *
 qib_alloc_fast_reg_page_list(struct ib_device *ibdev, int page_list_len)
 {
