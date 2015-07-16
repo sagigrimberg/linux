@@ -732,19 +732,19 @@ static int iser_fast_reg_mr(struct iscsi_iser_task *iser_task,
 			    struct iser_reg_resources *rsc,
 			    struct iser_mem_reg *reg)
 {
-	struct ib_conn *ib_conn = &iser_task->iser_conn->ib_conn;
-	struct iser_device *device = ib_conn->device;
-	struct ib_mr *mr = rsc->mr;
-	struct ib_fast_reg_page_list *frpl = rsc->frpl;
 	struct iser_tx_desc *tx_desc = &iser_task->desc;
+	struct ib_mr *mr = rsc->mr;
 	struct ib_send_wr *wr;
-	int offset, size, plen;
+	int err;
+	int access = IB_ACCESS_LOCAL_WRITE  |
+		     IB_ACCESS_REMOTE_WRITE |
+		     IB_ACCESS_REMOTE_READ;
 
-	plen = iser_sg_to_page_vec(mem, device->ib_device, frpl->page_list,
-				   &offset, &size);
-	if (plen * SIZE_4K < size) {
-		iser_err("fast reg page_list too short to hold this SG\n");
-		return -EINVAL;
+	err = ib_map_mr_sg(mr, mem->sg, mem->size, access);
+	if (err) {
+		iser_err("failed to map sg %p with %d entries\n",
+			 mem->sg, mem->dma_nents);
+		return err;
 	}
 
 	if (!rsc->mr_valid) {
@@ -753,24 +753,14 @@ static int iser_fast_reg_mr(struct iscsi_iser_task *iser_task,
 	}
 
 	wr = iser_tx_next_wr(tx_desc);
-	wr->opcode = IB_WR_FAST_REG_MR;
-	wr->wr_id = ISER_FASTREG_LI_WRID;
-	wr->send_flags = 0;
-	wr->wr.fast_reg.iova_start = frpl->page_list[0] + offset;
-	wr->wr.fast_reg.page_list = frpl;
-	wr->wr.fast_reg.page_list_len = plen;
-	wr->wr.fast_reg.page_shift = SHIFT_4K;
-	wr->wr.fast_reg.length = size;
-	wr->wr.fast_reg.rkey = mr->rkey;
-	wr->wr.fast_reg.access_flags = (IB_ACCESS_LOCAL_WRITE  |
-					IB_ACCESS_REMOTE_WRITE |
-					IB_ACCESS_REMOTE_READ);
+	ib_set_fastreg_wr(mr, mr->rkey, ISER_FASTREG_LI_WRID,
+			  false, wr);
 	rsc->mr_valid = 0;
 
 	reg->sge.lkey = mr->lkey;
 	reg->rkey = mr->rkey;
-	reg->sge.addr = frpl->page_list[0] + offset;
-	reg->sge.length = size;
+	reg->sge.addr = mr->iova;
+	reg->sge.length = mr->length;
 
 	iser_dbg("fast reg: lkey=0x%x, rkey=0x%x, addr=0x%llx,"
 		 " length=0x%x\n", reg->sge.lkey, reg->rkey,

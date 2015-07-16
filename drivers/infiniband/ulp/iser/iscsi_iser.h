@@ -413,7 +413,6 @@ struct iser_device {
  *
  * @mr:         memory region
  * @fmr_pool:   pool of fmrs
- * @frpl:       fast reg page list used by frwrs
  * @page_vec:   fast reg page list used by fmr pool
  * @mr_valid:   is mr valid indicator
  */
@@ -422,10 +421,7 @@ struct iser_reg_resources {
 		struct ib_mr             *mr;
 		struct ib_fmr_pool       *fmr_pool;
 	};
-	union {
-		struct ib_fast_reg_page_list     *frpl;
-		struct iser_page_vec             *page_vec;
-	};
+	struct iser_page_vec             *page_vec;
 	u8				  mr_valid:1;
 };
 
