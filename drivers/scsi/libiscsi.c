@@ -1732,10 +1732,16 @@ int iscsi_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *sc)
 				goto prepd_fault;
 			}
 		}
-		if (session->tt->xmit_task(task)) {
-			session->cmdsn--;
-			reason = FAILURE_SESSION_NOT_READY;
-			goto prepd_reject;
+		reason = session->tt->xmit_task(task);
+		if (reason) {
+			if (reason == -ENOMEM ||  reason == -EACCES) {
+				reason = FAILURE_OOM;
+				goto prepd_reject;
+			} else {
+				reason = FAILURE_SESSION_NOT_READY;
+				sc->result = DID_ABORT << 16;
+				goto prepd_fault;
+			}
 		}
 	} else {
 		list_add_tail(&task->running, &conn->cmdqueue);
