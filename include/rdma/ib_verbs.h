@@ -133,6 +133,7 @@ enum ib_device_cap_flags {
 	IB_DEVICE_MANAGED_FLOW_STEERING = (1<<29),
 	IB_DEVICE_SIGNATURE_HANDOVER	= (1<<30),
 	IB_DEVICE_ON_DEMAND_PAGING	= (1<<31),
+	IB_DEVICE_MAP_ARB_SG		= (1ULL<<32),
 };
 
 enum ib_signature_prot_cap {
@@ -193,7 +194,7 @@ struct ib_device_attr {
 	u32			hw_ver;
 	int			max_qp;
 	int			max_qp_wr;
-	int			device_cap_flags;
+	u64			device_cap_flags;
 	int			max_sge;
 	int			max_sge_rd;
 	int			max_cq;
@@ -555,6 +556,11 @@ __attribute_const__ int ib_rate_to_mult(enum ib_rate rate);
  * @rate: rate to convert.
  */
 __attribute_const__ int ib_rate_to_mbps(enum ib_rate rate);
+
+enum ib_mr_flags {
+	IB_MR_MAP_ARB_SG = 1,
+};
+
 
 enum ib_mr_type {
 	IB_MR_TYPE_FAST_REG,
