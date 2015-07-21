@@ -144,6 +144,10 @@ enum ib_device_cap_flags {
 	IB_DEVICE_ON_DEMAND_PAGING	= (1<<31),
 };
 
+enum ib_device_cap_flags_ex {
+	IB_DEVICE_SG_GAPS_REG		= (1ULL << 0),
+};
+
 enum ib_signature_prot_cap {
 	IB_PROT_T10DIF_TYPE_1 = 1,
 	IB_PROT_T10DIF_TYPE_2 = 1 << 1,
@@ -238,6 +242,7 @@ struct ib_device_attr {
 	struct ib_odp_caps	odp_caps;
 	uint64_t		timestamp_mask;
 	uint64_t		hca_core_clock; /* in KHZ */
+	uint64_t		device_cap_flags_ex;
 };
 
 enum ib_mtu {
@@ -573,10 +578,15 @@ __attribute_const__ int ib_rate_to_mbps(enum ib_rate rate);
  * @IB_MR_TYPE_SIGNATURE:     memory region that is used for
  *                            signature operations (data-integrity
  *                            capable regions)
+ * @IB_MR_TYPE_SG_GAPS_REG:   memory region that is capable to
+ *                            register any arbitrary sg lists (without
+ *                            the normal mr constraints - see
+ *                            ib_map_mr_sg)
  */
 enum ib_mr_type {
 	IB_MR_TYPE_MEM_REG,
 	IB_MR_TYPE_SIGNATURE,
+	IB_MR_TYPE_SG_GAPS_REG,
 };
 
 /**
