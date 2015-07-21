@@ -487,10 +487,7 @@ static int fall_to_bounce_buf(struct iscsi_iser_task *iser_task,
 			      struct iser_data_buf *mem,
 			      enum iser_data_dir cmd_dir)
 {
-	struct iscsi_conn *iscsi_conn = iser_task->iser_conn->iscsi_conn;
 	struct iser_device *device = iser_task->iser_conn->ib_conn.device;
-
-	iscsi_conn->fmr_unalign_cnt++;
 
 	if (iser_debug_level > 0)
 		iser_data_buf_dump(mem, device->ib_device);
@@ -777,6 +774,11 @@ iser_handle_unaligned_buf(struct iscsi_iser_task *task,
 	aligned_len = iser_data_buf_aligned_len(mem, device->ib_device,
 						iser_conn->scsi_sg_tablesize);
 	if (aligned_len != mem->dma_nents) {
+		iser_conn->iscsi_conn->fmr_unalign_cnt++;
+		if (device->dev_attr.device_cap_flags_ex & IB_DEVICE_SG_GAPS_REG)
+			/* Arbitrary sg support, no need to bounce :) */
+			return 0;
+
 		err = fall_to_bounce_buf(task, mem, dir);
 		if (err)
 			return err;
