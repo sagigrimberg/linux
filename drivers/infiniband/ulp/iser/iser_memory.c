@@ -781,6 +781,10 @@ iser_handle_unaligned_buf(struct iscsi_iser_task *task,
 	aligned_len = iser_data_buf_aligned_len(mem, device->ib_device,
 						iser_conn->scsi_sg_tablesize);
 	if (aligned_len != mem->dma_nents) {
+		if (device->dev_attr.device_cap_flags & IB_DEVICE_MAP_ARB_SG)
+			/* Arbitrary sg support, no need to bounce :) */
+			return 0;
+
 		err = fall_to_bounce_buf(task, mem, dir);
 		if (err)
 			return err;
