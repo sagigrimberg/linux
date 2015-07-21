@@ -973,7 +973,16 @@ static umode_t iser_attr_is_visible(int param_type, int param)
 
 static int iscsi_iser_slave_alloc(struct scsi_device *sdev)
 {
-	blk_queue_virt_boundary(sdev->request_queue, ~MASK_4K);
+	struct iscsi_session *session;
+	struct iser_conn *iser_conn;
+	struct ib_device_attr *attr;
+
+	session = starget_to_session(scsi_target(sdev))->dd_data;
+	iser_conn = session->leadconn->dd_data;
+	attr = &iser_conn->ib_conn.device->dev_attr;
+
+	if (!(attr->device_cap_flags_ex & IB_DEVICE_SG_GAPS_REG))
+		blk_queue_virt_boundary(sdev->request_queue, ~MASK_4K);
 
 	return 0;
 }
