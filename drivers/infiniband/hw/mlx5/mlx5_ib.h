@@ -315,11 +315,15 @@ enum mlx5_ib_mtt_access_flags {
 
 struct mlx5_ib_mr {
 	struct ib_mr		ibmr;
-	u64		        *pl;
+	union {
+		__be64			*pl;
+		struct mlx5_klm		*klms;
+	};
 	__be64			*mpl;
 	dma_addr_t		pl_map;
 	int			ndescs;
 	int			max_descs;
+	int			access_mode;
 	struct mlx5_core_mr	mmr;
 	struct ib_umem	       *umem;
 	struct mlx5_shared_mr_info	*smr_info;

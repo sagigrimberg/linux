@@ -1168,6 +1168,40 @@ error:
 }
 
 static int
+mlx5_alloc_klm_list(struct ib_device *device,
+		    struct mlx5_ib_mr *mr, int ndescs)
+{
+	int size = sizeof(struct mlx5_klm) * ndescs;
+
+	size += max_t(int, MLX5_UMR_ALIGN - ARCH_KMALLOC_MINALIGN, 0);
+	mr->klms = kzalloc(size, GFP_KERNEL);
+	if (!mr->klms)
+		return -ENOMEM;
+
+	mr->pl_map = dma_map_single(device->dma_device, mr->klms,
+				    size, DMA_TO_DEVICE);
+	if (dma_mapping_error(device->dma_device, mr->pl_map))
+		goto err;
+
+	return 0;
+err:
+	kfree(mr->klms);
+
+	return -ENOMEM;
+}
+
+static void
+mlx5_free_klm_list(struct mlx5_ib_mr *mr)
+{
+	struct ib_device *device = mr->ibmr.device;
+	int size = mr->max_descs * sizeof(struct mlx5_klm);
+
+	kfree(mr->klms);
+	dma_unmap_single(device->dma_device, mr->pl_map, size, DMA_TO_DEVICE);
+	mr->klms = NULL;
+}
+
+static int
 mlx5_alloc_page_list(struct ib_device *device,
 		     struct mlx5_ib_mr *mr, int ndescs)
 {
@@ -1222,7 +1256,10 @@ static int clean_mr(struct mlx5_ib_mr *mr)
 		mr->sig = NULL;
 	}
 
-	mlx5_free_page_list(mr);
+	if (mr->access_mode == MLX5_ACCESS_MODE_MTT)
+		mlx5_free_page_list(mr);
+	else
+		mlx5_free_klm_list(mr);
 
 	if (!umred) {
 		err = destroy_mkey(dev, mr);
@@ -1293,10 +1330,10 @@ struct ib_mr *mlx5_ib_alloc_mr(struct ib_pd *pd,
 	struct mlx5_ib_dev *dev = to_mdev(pd->device);
 	struct mlx5_create_mkey_mbox_in *in;
 	struct mlx5_ib_mr *mr;
-	int access_mode, err;
-	int ndescs = roundup(max_entries, 4);
+	int ndescs = ALIGN(max_entries, 4);
+	int err;
 
-	if (flags)
+	if (flags & ~IB_MR_MAP_ARB_SG)
 		return ERR_PTR(-EINVAL);
 
 	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
@@ -1315,13 +1352,20 @@ struct ib_mr *mlx5_ib_alloc_mr(struct ib_pd *pd,
 	in->seg.flags_pd = cpu_to_be32(to_mpd(pd)->pdn);
 
 	if (mr_type == IB_MR_TYPE_FAST_REG) {
-		access_mode = MLX5_ACCESS_MODE_MTT;
-		in->seg.log2_page_size = PAGE_SHIFT;
+		if (flags & IB_MR_MAP_ARB_SG) {
+			mr->access_mode = MLX5_ACCESS_MODE_KLM;
 
-		err = mlx5_alloc_page_list(pd->device, mr, ndescs);
-		if (err)
-			goto err_free_in;
+			err = mlx5_alloc_klm_list(pd->device, mr, ndescs);
+			if (err)
+				goto err_free_in;
+		} else {
+			mr->access_mode = MLX5_ACCESS_MODE_MTT;
+			in->seg.log2_page_size = PAGE_SHIFT;
 
+			err = mlx5_alloc_page_list(pd->device, mr, ndescs);
+			if (err)
+				goto err_free_in;
+		}
 		mr->max_descs = ndescs;
 	} else if (mr_type == IB_MR_TYPE_SIGNATURE) {
 		u32 psv_index[2];
@@ -1341,7 +1385,7 @@ struct ib_mr *mlx5_ib_alloc_mr(struct ib_pd *pd,
 		if (err)
 			goto err_free_sig;
 
-		access_mode = MLX5_ACCESS_MODE_KLM;
+		mr->access_mode = MLX5_ACCESS_MODE_KLM;
 		mr->sig->psv_memory.psv_idx = psv_index[0];
 		mr->sig->psv_wire.psv_idx = psv_index[1];
 
@@ -1355,7 +1399,7 @@ struct ib_mr *mlx5_ib_alloc_mr(struct ib_pd *pd,
 		goto err_free_in;
 	}
 
-	in->seg.flags = MLX5_PERM_UMR_EN | access_mode;
+	in->seg.flags = MLX5_PERM_UMR_EN | mr->access_mode;
 	err = mlx5_core_create_mkey(dev->mdev, &mr->mmr, in, sizeof(*in),
 				    NULL, NULL, NULL);
 	if (err)
@@ -1379,7 +1423,10 @@ err_destroy_psv:
 			mlx5_ib_warn(dev, "failed to destroy wire psv %d\n",
 				     mr->sig->psv_wire.psv_idx);
 	}
-	mlx5_free_page_list(mr);
+	if (mr->access_mode == MLX5_ACCESS_MODE_MTT)
+		mlx5_free_page_list(mr);
+	else
+		mlx5_free_klm_list(mr);
 err_free_sig:
 	kfree(mr->sig);
 err_free_in:
