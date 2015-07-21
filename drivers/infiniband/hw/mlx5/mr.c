@@ -1519,11 +1519,41 @@ done:
 	return ret;
 }
 
+static int
+mlx5_ib_sg_to_klms(struct mlx5_ib_mr *mr,
+		   struct scatterlist *sgl,
+		   unsigned short sg_nents)
+{
+	struct scatterlist *sg = sgl;
+	u32 lkey = mr->ibmr.device->local_dma_lkey;
+	int i;
+
+	if (sg_nents > mr->max_descs)
+		return -EINVAL;
+
+	mr->ibmr.iova = sg_dma_address(sg);
+	mr->ibmr.length = 0;
+	mr->ndescs = sg_nents;
+
+	for (i = 0; i < sg_nents; i++) {
+		mr->klms[i].va = cpu_to_be64(sg_dma_address(sg));
+		mr->klms[i].bcount = cpu_to_be32(sg_dma_len(sg));
+		mr->klms[i].key = cpu_to_be32(lkey);
+		mr->ibmr.length += sg_dma_len(sg);
+		sg = sg_next(sg);
+	}
+
+	return 0;
+}
+
 int mlx5_ib_map_mr_sg(struct ib_mr *ibmr,
 		      struct scatterlist *sg,
 		      unsigned short sg_nents)
 {
 	struct mlx5_ib_mr *mr = to_mmr(ibmr);
+
+	if (mr->access_mode == MLX5_ACCESS_MODE_KLM)
+		return mlx5_ib_sg_to_klms(mr, sg, sg_nents);
 
 	return ib_sg_to_pages(sg, sg_nents, mr->max_descs,
 			      mr->pl, &mr->ndescs,

@@ -1909,6 +1909,10 @@ static void set_fastreg_umr_seg(struct mlx5_wqe_umr_ctrl_seg *umr,
 {
 	int ndescs = mr->ndescs;
 
+	if (mr->access_mode == MLX5_ACCESS_MODE_KLM)
+		/* KLMs take twice the size of MTTs */
+		ndescs *= 2;
+
 	memset(umr, 0, sizeof(*umr));
 	umr->flags = MLX5_UMR_CHECK_NOT_FREE;
 	umr->klm_octowords = get_klm_octo(ndescs);
@@ -2012,15 +2016,21 @@ static void set_fastreg_mkey_seg(struct mlx5_mkey_seg *seg,
 {
 	int ndescs = ALIGN(mr->ndescs, 8) >> 1;
 
+	if (mr->access_mode == MLX5_ACCESS_MODE_MTT)
+		seg->log2_page_size = PAGE_SHIFT;
+	else if (mr->access_mode == MLX5_ACCESS_MODE_KLM)
+		/* KLMs take twice the size of MTTs */
+		ndescs *= 2;
+
+
 	memset(seg, 0, sizeof(*seg));
-	seg->flags = get_umr_flags(mr->ibmr.access) | MLX5_ACCESS_MODE_MTT;
+	seg->flags = get_umr_flags(mr->ibmr.access) | mr->access_mode;
 	*writ = seg->flags & (MLX5_PERM_LOCAL_WRITE | IB_ACCESS_REMOTE_WRITE);
 	seg->qpn_mkey7_0 = cpu_to_be32((key & 0xff) | 0xffffff00);
 	seg->flags_pd = cpu_to_be32(MLX5_MKEY_REMOTE_INVAL);
 	seg->start_addr = cpu_to_be64(mr->ibmr.iova);
 	seg->len = cpu_to_be64(mr->ibmr.length);
 	seg->xlt_oct_size = cpu_to_be32(ndescs);
-	seg->log2_page_size = PAGE_SHIFT;
 }
 
 static void set_mkey_segment(struct mlx5_mkey_seg *seg, struct ib_send_wr *wr,
@@ -2069,12 +2079,19 @@ static void set_fastreg_ds(struct mlx5_wqe_data_seg *dseg,
 			   struct mlx5_ib_pd *pd,
 			   int writ)
 {
-	u64 perm = MLX5_EN_RD | (writ ? MLX5_EN_WR : 0);
-	int bcount = sizeof(u64) * mr->ndescs;
-	int i;
+	int bcount;
 
-	for (i = 0; i < mr->ndescs; i++)
-		mr->mpl[i] = cpu_to_be64(mr->pl[i] | perm);
+	if (mr->access_mode == MLX5_ACCESS_MODE_MTT) {
+		u64 perm = MLX5_EN_RD | (writ ? MLX5_EN_WR : 0);
+		int i;
+
+		bcount = sizeof(u64) * mr->ndescs;
+		for (i = 0; i < mr->ndescs; i++)
+			mr->mpl[i] = cpu_to_be64(mr->pl[i] | perm);
+	} else {
+		bcount = sizeof(struct mlx5_klm) * mr->ndescs;
+	}
+
 
 	dseg->addr = cpu_to_be64(mr->pl_map);
 	dseg->byte_count = cpu_to_be32(ALIGN(bcount, 64));
