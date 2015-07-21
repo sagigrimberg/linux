@@ -263,6 +263,10 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	props->vendor_part_id	   = mdev->pdev->device;
 	props->hw_ver		   = mdev->pdev->revision;
 
+	/* FIXME: Should read cap from FW and not rely on vendor_part_id */
+	if (props->vendor_part_id != 4113 && props->vendor_part_id != 4114)
+		props->device_cap_flags_ex |= IB_DEVICE_SG_GAPS_REG;
+
 	props->max_mr_size	   = ~0ull;
 	props->page_size_cap	   = ~(min_page_size - 1);
 	props->max_qp		   = 1 << MLX5_CAP_GEN(mdev, log_max_qp);
