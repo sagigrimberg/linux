@@ -113,11 +113,15 @@ __frwr_recovery_worker(struct work_struct *work)
 	struct rpcrdma_xprt *r_xprt = r->r.frmr.fr_xprt;
 	unsigned int depth = r_xprt->rx_ia.ri_max_frmr_depth;
 	struct ib_pd *pd = r_xprt->rx_ia.ri_pd;
+	u32 flags = 0;
 
 	if (ib_dereg_mr(r->r.frmr.fr_mr))
 		goto out_fail;
 
-	r->r.frmr.fr_mr = ib_alloc_mr(pd, IB_MR_TYPE_FAST_REG, depth, 0);
+	if (r->r.frmr.arb_sg)
+		flags = IB_MR_MAP_ARB_SG;
+
+	r->r.frmr.fr_mr = ib_alloc_mr(pd, IB_MR_TYPE_FAST_REG, depth, flags);
 	if (IS_ERR(r->r.frmr.fr_mr))
 		goto out_fail;
 
@@ -143,12 +147,17 @@ __frwr_queue_recovery(struct rpcrdma_mw *r)
 
 static int
 __frwr_init(struct rpcrdma_mw *r, struct ib_pd *pd, struct ib_device *device,
-	    unsigned int depth)
+	    unsigned int depth, bool arb_sg)
 {
 	struct rpcrdma_frmr *f = &r->r.frmr;
+	u32 flags = 0;
 	int rc;
 
-	f->fr_mr = ib_alloc_mr(pd, IB_MR_TYPE_FAST_REG, depth, 0);
+	f->arb_sg = arb_sg;
+	if (f->arb_sg)
+		flags = IB_MR_MAP_ARB_SG;
+
+	f->fr_mr = ib_alloc_mr(pd, IB_MR_TYPE_FAST_REG, depth, flags);
 	if (IS_ERR(f->fr_mr))
 		goto out_mr_err;
 
@@ -273,11 +282,17 @@ frwr_op_init(struct rpcrdma_xprt *r_xprt)
 	struct ib_device *device = r_xprt->rx_ia.ri_device;
 	unsigned int depth = r_xprt->rx_ia.ri_max_frmr_depth;
 	struct ib_pd *pd = r_xprt->rx_ia.ri_pd;
-	int i;
+	struct ib_device_attr devattr;
+	bool arb_sg = false;
+	int i, rc;
 
 	spin_lock_init(&buf->rb_mwlock);
 	INIT_LIST_HEAD(&buf->rb_mws);
 	INIT_LIST_HEAD(&buf->rb_all);
+
+	rc = ib_query_device(device, &devattr);
+	if (!rc && devattr.device_cap_flags & IB_DEVICE_MAP_ARB_SG)
+		arb_sg = true;
 
 	i = max_t(int, RPCRDMA_MAX_DATA_SEGS / depth, 1);
 	i += 2;				/* head + tail */
@@ -286,13 +301,12 @@ frwr_op_init(struct rpcrdma_xprt *r_xprt)
 
 	while (i--) {
 		struct rpcrdma_mw *r;
-		int rc;
 
 		r = kzalloc(sizeof(*r), GFP_KERNEL);
 		if (!r)
 			return -ENOMEM;
 
-		rc = __frwr_init(r, pd, device, depth);
+		rc = __frwr_init(r, pd, device, depth, arb_sg);
 		if (rc) {
 			kfree(r);
 			return rc;
@@ -353,8 +367,9 @@ frwr_op_map(struct rpcrdma_xprt *r_xprt, struct rpcrdma_mr_seg *seg,
 		++i;
 
 		/* Check for holes */
-		if ((i < nsegs && offset_in_page(seg->mr_offset)) ||
-		    offset_in_page((seg-1)->mr_offset + (seg-1)->mr_len))
+		if (!frmr->arb_sg &&
+		    ((i < nsegs && offset_in_page(seg->mr_offset)) ||
+		    offset_in_page((seg-1)->mr_offset + (seg-1)->mr_len)))
 			break;
 	}
 

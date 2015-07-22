@@ -202,6 +202,7 @@ struct rpcrdma_frmr {
 	enum rpcrdma_frmr_state		fr_state;
 	struct work_struct		fr_work;
 	struct rpcrdma_xprt		*fr_xprt;
+	bool				arb_sg;
 };
 
 struct rpcrdma_fmr {
