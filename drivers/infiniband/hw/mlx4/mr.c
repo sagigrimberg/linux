@@ -59,7 +59,7 @@ struct ib_mr *mlx4_ib_get_dma_mr(struct ib_pd *pd, int acc)
 	struct mlx4_ib_mr *mr;
 	int err;
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
@@ -140,7 +140,7 @@ struct ib_mr *mlx4_ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 	int err;
 	int n;
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
@@ -276,7 +276,10 @@ mlx4_alloc_page_list(struct ib_device *device,
 		     struct mlx4_ib_mr *mr,
 		      int max_entries)
 {
-	int size = max_entries * sizeof (u64);
+	int size = max_entries * sizeof(u64);
+
+	if (max_entries > MLX4_MAX_FAST_REG_PAGES)
+		return -EINVAL;
 
 	mr->pl = kcalloc(max_entries, sizeof(u64), GFP_KERNEL);
 	if (!mr->pl)
@@ -401,7 +404,7 @@ struct ib_mr *mlx4_ib_alloc_mr(struct ib_pd *pd,
 	if (mr_type != IB_MR_TYPE_FAST_REG || flags)
 		return ERR_PTR(-EINVAL);
 
-	mr = kmalloc(sizeof *mr, GFP_KERNEL);
+	mr = kzalloc(sizeof *mr, GFP_KERNEL);
 	if (!mr)
 		return ERR_PTR(-ENOMEM);
 
