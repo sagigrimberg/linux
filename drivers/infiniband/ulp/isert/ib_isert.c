@@ -460,7 +460,7 @@ isert_device_get(struct rdma_cm_id *cma_id)
 }
 
 static void
-isert_conn_free_fastreg_pool(struct isert_conn *isert_conn)
+isert_free_fastreg_pool(struct isert_conn *isert_conn)
 {
 	struct isert_fr_desc *fr_desc, *tmp;
 	int i = 0;
@@ -534,31 +534,42 @@ err_pi_ctx:
 	return ret;
 }
 
-static int
-isert_create_fr_desc(struct ib_device *ib_device, struct ib_pd *pd,
-		     struct isert_fr_desc *fr_desc)
+static struct isert_fr_desc *
+isert_alloc_fr_desc(struct ib_pd *pd)
 {
-	fr_desc->data_mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
-				       ISCSI_ISER_SG_TABLESIZE);
-	if (IS_ERR(fr_desc->data_mr)) {
-		isert_err("Failed to allocate data frmr err=%ld\n",
-			  PTR_ERR(fr_desc->data_mr));
-		return PTR_ERR(fr_desc->data_mr);
+	struct isert_fr_desc *desc;
+	int ret;
+
+	desc = kzalloc(sizeof(*desc), GFP_KERNEL);
+	if (!desc)
+		return ERR_PTR(-ENOMEM);
+
+	desc->data_mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
+				    ISCSI_ISER_SG_TABLESIZE);
+	if (IS_ERR(desc->data_mr)) {
+		ret = PTR_ERR(desc->data_mr);
+		isert_err("Failed to allocate data frmr err=%d\n", ret);
+		goto err_desc;
 	}
-	fr_desc->ind |= ISERT_DATA_KEY_VALID;
+	desc->ind |= ISERT_DATA_KEY_VALID;
 
-	isert_dbg("Created fr_desc %p\n", fr_desc);
+	isert_dbg("Allocated desc %p\n", desc);
 
-	return 0;
+	return desc;
+
+err_desc:
+	kfree(desc);
+
+	return ERR_PTR(ret);
 }
 
 static int
-isert_conn_create_fastreg_pool(struct isert_conn *isert_conn)
+isert_alloc_fastreg_pool(struct isert_conn *isert_conn)
 {
-	struct isert_fr_desc *fr_desc;
 	struct isert_device *device = isert_conn->device;
 	struct se_session *se_sess = isert_conn->conn->sess->se_sess;
 	struct se_node_acl *se_nacl = se_sess->se_node_acl;
+	struct isert_fr_desc *fr_desc;
 	int i, ret, tag_num;
 	/*
 	 * Setup the number of FRMRs based upon the number of tags
@@ -569,19 +580,9 @@ isert_conn_create_fastreg_pool(struct isert_conn *isert_conn)
 
 	isert_conn->fr_pool_size = 0;
 	for (i = 0; i < tag_num; i++) {
-		fr_desc = kzalloc(sizeof(*fr_desc), GFP_KERNEL);
-		if (!fr_desc) {
-			isert_err("Failed to allocate fast_reg descriptor\n");
-			ret = -ENOMEM;
-			goto err;
-		}
-
-		ret = isert_create_fr_desc(device->ib_device,
-					   device->pd, fr_desc);
-		if (ret) {
-			isert_err("Failed to create fastreg descriptor err=%d\n",
-			       ret);
-			kfree(fr_desc);
+		fr_desc = isert_alloc_fr_desc(device->pd);
+		if (IS_ERR(fr_desc)) {
+			ret = PTR_ERR(fr_desc);
 			goto err;
 		}
 
@@ -595,7 +596,8 @@ isert_conn_create_fastreg_pool(struct isert_conn *isert_conn)
 	return 0;
 
 err:
-	isert_conn_free_fastreg_pool(isert_conn);
+	isert_free_fastreg_pool(isert_conn);
+
 	return ret;
 }
 
@@ -762,7 +764,7 @@ isert_connect_release(struct isert_conn *isert_conn)
 	BUG_ON(!device);
 
 	if (device->use_fastreg)
-		isert_conn_free_fastreg_pool(isert_conn);
+		isert_free_fastreg_pool(isert_conn);
 
 	isert_free_rx_descriptors(isert_conn);
 	if (isert_conn->cm_id)
@@ -1177,7 +1179,7 @@ isert_put_login_tx(struct iscsi_conn *conn, struct iscsi_login *login,
 		if (login->login_complete) {
 			if (!conn->sess->sess_ops->SessionType &&
 			    isert_conn->device->use_fastreg) {
-				ret = isert_conn_create_fastreg_pool(isert_conn);
+				ret = isert_alloc_fastreg_pool(isert_conn);
 				if (ret) {
 					isert_err("Conn: %p failed to create"
 					       " fastreg pool\n", isert_conn);
