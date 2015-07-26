@@ -462,7 +462,7 @@ isert_device_get(struct rdma_cm_id *cma_id)
 static void
 isert_conn_free_fastreg_pool(struct isert_conn *isert_conn)
 {
-	struct fast_reg_descriptor *fr_desc, *tmp;
+	struct isert_fr_desc *fr_desc, *tmp;
 	int i = 0;
 
 	if (list_empty(&isert_conn->fr_pool))
@@ -489,7 +489,7 @@ isert_conn_free_fastreg_pool(struct isert_conn *isert_conn)
 }
 
 static int
-isert_create_pi_ctx(struct fast_reg_descriptor *desc,
+isert_create_pi_ctx(struct isert_fr_desc *desc,
 		    struct ib_device *device,
 		    struct ib_pd *pd)
 {
@@ -536,7 +536,7 @@ err_pi_ctx:
 
 static int
 isert_create_fr_desc(struct ib_device *ib_device, struct ib_pd *pd,
-		     struct fast_reg_descriptor *fr_desc)
+		     struct isert_fr_desc *fr_desc)
 {
 	fr_desc->data_mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
 				       ISCSI_ISER_SG_TABLESIZE);
@@ -555,7 +555,7 @@ isert_create_fr_desc(struct ib_device *ib_device, struct ib_pd *pd,
 static int
 isert_conn_create_fastreg_pool(struct isert_conn *isert_conn)
 {
-	struct fast_reg_descriptor *fr_desc;
+	struct isert_fr_desc *fr_desc;
 	struct isert_device *device = isert_conn->device;
 	struct se_session *se_sess = isert_conn->conn->sess->se_sess;
 	struct se_node_acl *se_nacl = se_sess->se_node_acl;
@@ -2526,7 +2526,7 @@ isert_inv_rkey(struct ib_send_wr *inv_wr, struct ib_mr *mr)
 
 static int
 isert_fast_reg_mr(struct isert_conn *isert_conn,
-		  struct fast_reg_descriptor *fr_desc,
+		  struct isert_fr_desc *fr_desc,
 		  struct isert_data_buf *mem,
 		  enum isert_indicator ind,
 		  struct ib_sge *sge)
@@ -2659,7 +2659,7 @@ static int
 isert_reg_sig_mr(struct isert_conn *isert_conn,
 		 struct se_cmd *se_cmd,
 		 struct isert_rdma_wr *rdma_wr,
-		 struct fast_reg_descriptor *fr_desc)
+		 struct isert_fr_desc *fr_desc)
 {
 	struct ib_sig_handover_wr sig_wr;
 	struct ib_send_wr inv_wr, *bad_wr, *wr = NULL;
@@ -2786,7 +2786,7 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	struct se_cmd *se_cmd = &cmd->se_cmd;
 	struct isert_cmd *isert_cmd = iscsit_priv_cmd(cmd);
 	struct isert_conn *isert_conn = conn->context;
-	struct fast_reg_descriptor *fr_desc = NULL;
+	struct isert_fr_desc *fr_desc = NULL;
 	struct ib_rdma_wr *rdma_wr;
 	struct ib_sge *ib_sg;
 	u32 offset;
@@ -2805,7 +2805,7 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	if (wr->data.dma_nents != 1 || isert_prot_cmd(isert_conn, se_cmd)) {
 		spin_lock_irqsave(&isert_conn->pool_lock, flags);
 		fr_desc = list_first_entry(&isert_conn->fr_pool,
-					   struct fast_reg_descriptor, list);
+					   struct isert_fr_desc, list);
 		list_del(&fr_desc->list);
 		spin_unlock_irqrestore(&isert_conn->pool_lock, flags);
 		wr->fr_desc = fr_desc;

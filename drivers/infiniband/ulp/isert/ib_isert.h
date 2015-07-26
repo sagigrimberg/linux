@@ -87,7 +87,7 @@ struct pi_context {
 	struct ib_mr		       *sig_mr;
 };
 
-struct fast_reg_descriptor {
+struct isert_fr_desc {
 	struct list_head		list;
 	struct ib_mr		       *data_mr;
 	u8				ind;
@@ -121,7 +121,7 @@ struct isert_rdma_wr {
 	struct ib_sge		ib_sg[3];
 	struct isert_data_buf	data;
 	struct isert_data_buf	prot;
-	struct fast_reg_descriptor *fr_desc;
+	struct isert_fr_desc    *fr_desc;
 };
 
 struct isert_cmd {
