@@ -460,6 +460,15 @@ isert_device_get(struct rdma_cm_id *cma_id)
 }
 
 static void
+isert_free_pi_ctx(struct isert_fr_desc *desc)
+{
+	if (desc->sig_mr)
+		ib_dereg_mr(desc->sig_mr);
+	if (desc->prot_mr)
+		ib_dereg_mr(desc->prot_mr);
+}
+
+static void
 isert_free_fastreg_pool(struct isert_conn *isert_conn)
 {
 	struct isert_fr_desc *fr_desc, *tmp;
@@ -474,11 +483,7 @@ isert_free_fastreg_pool(struct isert_conn *isert_conn)
 				 &isert_conn->fr_pool, list) {
 		list_del(&fr_desc->list);
 		ib_dereg_mr(fr_desc->data_mr);
-		if (fr_desc->pi_ctx) {
-			ib_dereg_mr(fr_desc->pi_ctx->prot_mr);
-			ib_dereg_mr(fr_desc->pi_ctx->sig_mr);
-			kfree(fr_desc->pi_ctx);
-		}
+		isert_free_pi_ctx(fr_desc);
 		kfree(fr_desc);
 		++i;
 	}
@@ -492,43 +497,31 @@ static int
 isert_alloc_pi_ctx(struct isert_fr_desc *desc,
 		    struct ib_pd *pd)
 {
-	struct pi_context *pi_ctx;
 	int ret;
 
-	pi_ctx = kzalloc(sizeof(*desc->pi_ctx), GFP_KERNEL);
-	if (!pi_ctx) {
-		isert_err("Failed to allocate pi context\n");
-		return -ENOMEM;
-	}
-
-	pi_ctx->prot_mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
-				      ISCSI_ISER_SG_TABLESIZE);
-	if (IS_ERR(pi_ctx->prot_mr)) {
-		isert_err("Failed to allocate prot frmr err=%ld\n",
-			  PTR_ERR(pi_ctx->prot_mr));
-		ret = PTR_ERR(pi_ctx->prot_mr);
-		goto err_pi_ctx;
+	desc->prot_mr = ib_alloc_mr(pd, IB_MR_TYPE_MEM_REG,
+				    ISCSI_ISER_SG_TABLESIZE);
+	if (IS_ERR(desc->prot_mr)) {
+		ret = PTR_ERR(desc->prot_mr);
+		isert_err("Failed to allocate prot frmr err=%d\n", ret);
+		return ret;
 	}
 	desc->ind |= ISERT_PROT_KEY_VALID;
 
-	pi_ctx->sig_mr = ib_alloc_mr(pd, IB_MR_TYPE_SIGNATURE, 2);
-	if (IS_ERR(pi_ctx->sig_mr)) {
-		isert_err("Failed to allocate signature enabled mr err=%ld\n",
-			  PTR_ERR(pi_ctx->sig_mr));
-		ret = PTR_ERR(pi_ctx->sig_mr);
+	desc->sig_mr = ib_alloc_mr(pd, IB_MR_TYPE_SIGNATURE, 2);
+	if (IS_ERR(desc->sig_mr)) {
+		ret = PTR_ERR(desc->sig_mr);
+		isert_err("Failed to allocate signature enabled mr err=%d\n", ret);
 		goto err_prot_mr;
 	}
 
-	desc->pi_ctx = pi_ctx;
 	desc->ind |= ISERT_SIG_KEY_VALID;
 	desc->ind &= ~ISERT_PROTECTED;
 
 	return 0;
 
 err_prot_mr:
-	ib_dereg_mr(pi_ctx->prot_mr);
-err_pi_ctx:
-	kfree(pi_ctx);
+	ib_dereg_mr(desc->prot_mr);
 
 	return ret;
 }
@@ -1903,8 +1896,7 @@ isert_completion_rdma_write(struct iser_tx_desc *tx_desc,
 	int ret = 0;
 
 	if (wr->fr_desc && wr->fr_desc->ind & ISERT_PROTECTED) {
-		ret = isert_check_pi_status(se_cmd,
-					    wr->fr_desc->pi_ctx->sig_mr);
+		ret = isert_check_pi_status(se_cmd, wr->fr_desc->sig_mr);
 		wr->fr_desc->ind &= ~ISERT_PROTECTED;
 	}
 
@@ -1929,8 +1921,7 @@ isert_completion_rdma_read(struct iser_tx_desc *tx_desc,
 	int ret = 0;
 
 	if (wr->fr_desc && wr->fr_desc->ind & ISERT_PROTECTED) {
-		ret = isert_check_pi_status(se_cmd,
-					    wr->fr_desc->pi_ctx->sig_mr);
+		ret = isert_check_pi_status(se_cmd, wr->fr_desc->sig_mr);
 		wr->fr_desc->ind &= ~ISERT_PROTECTED;
 	}
 
@@ -2564,7 +2555,7 @@ isert_fast_reg_mr(struct isert_conn *isert_conn,
 		mr = fr_desc->data_mr;
 	else
 		/* Registering protection buffer */
-		mr = fr_desc->pi_ctx->prot_mr;
+		mr = fr_desc->prot_mr;
 
 	if (!(fr_desc->ind & ind)) {
 		isert_inv_rkey(&inv_wr, mr);
@@ -2675,7 +2666,6 @@ isert_reg_sig_mr(struct isert_conn *isert_conn,
 {
 	struct ib_sig_handover_wr sig_wr;
 	struct ib_send_wr inv_wr, *bad_wr, *wr = NULL;
-	struct pi_context *pi_ctx = fr_desc->pi_ctx;
 	struct ib_sig_attrs sig_attrs;
 	int ret;
 
@@ -2687,7 +2677,7 @@ isert_reg_sig_mr(struct isert_conn *isert_conn,
 	sig_attrs.check_mask = isert_set_prot_checks(se_cmd->prot_checks);
 
 	if (!(fr_desc->ind & ISERT_SIG_KEY_VALID)) {
-		isert_inv_rkey(&inv_wr, pi_ctx->sig_mr);
+		isert_inv_rkey(&inv_wr, fr_desc->sig_mr);
 		wr = &inv_wr;
 	}
 
@@ -2698,7 +2688,7 @@ isert_reg_sig_mr(struct isert_conn *isert_conn,
 	sig_wr.wr.num_sge = 1;
 	sig_wr.access_flags = IB_ACCESS_LOCAL_WRITE;
 	sig_wr.sig_attrs = &sig_attrs;
-	sig_wr.sig_mr = pi_ctx->sig_mr;
+	sig_wr.sig_mr = fr_desc->sig_mr;
 	if (se_cmd->t_prot_sg)
 		sig_wr.prot = &rdma_wr->ib_sg[PROT];
 
@@ -2714,7 +2704,7 @@ isert_reg_sig_mr(struct isert_conn *isert_conn,
 	}
 	fr_desc->ind &= ~ISERT_SIG_KEY_VALID;
 
-	rdma_wr->ib_sg[SIG].lkey = pi_ctx->sig_mr->lkey;
+	rdma_wr->ib_sg[SIG].lkey = fr_desc->sig_mr->lkey;
 	rdma_wr->ib_sg[SIG].addr = 0;
 	rdma_wr->ib_sg[SIG].length = se_cmd->data_length;
 	if (se_cmd->prot_op != TARGET_PROT_DIN_STRIP &&

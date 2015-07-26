@@ -82,16 +82,12 @@ enum isert_indicator {
 	ISERT_SIG_KEY_VALID	= 1 << 3,
 };
 
-struct pi_context {
-	struct ib_mr		       *prot_mr;
-	struct ib_mr		       *sig_mr;
-};
-
 struct isert_fr_desc {
 	struct list_head		list;
 	struct ib_mr		       *data_mr;
+	struct ib_mr		       *prot_mr;
+	struct ib_mr		       *sig_mr;
 	u8				ind;
-	struct pi_context	       *pi_ctx;
 };
 
 struct isert_data_buf {
