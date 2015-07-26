@@ -489,8 +489,7 @@ isert_free_fastreg_pool(struct isert_conn *isert_conn)
 }
 
 static int
-isert_create_pi_ctx(struct isert_fr_desc *desc,
-		    struct ib_device *device,
+isert_alloc_pi_ctx(struct isert_fr_desc *desc,
 		    struct ib_pd *pd)
 {
 	struct pi_context *pi_ctx;
@@ -535,7 +534,7 @@ err_pi_ctx:
 }
 
 static struct isert_fr_desc *
-isert_alloc_fr_desc(struct ib_pd *pd)
+isert_alloc_fr_desc(struct ib_pd *pd, bool pi_enable)
 {
 	struct isert_fr_desc *desc;
 	int ret;
@@ -553,10 +552,20 @@ isert_alloc_fr_desc(struct ib_pd *pd)
 	}
 	desc->ind |= ISERT_DATA_KEY_VALID;
 
+	if (pi_enable) {
+		ret = isert_alloc_pi_ctx(desc, pd);
+		if (ret) {
+			isert_err("Failed to allocate pi_ctx err=%d\n", ret);
+			goto err_data_mr;
+		}
+	}
+
 	isert_dbg("Allocated desc %p\n", desc);
 
 	return desc;
 
+err_data_mr:
+	ib_dereg_mr(desc->data_mr);
 err_desc:
 	kfree(desc);
 
@@ -580,7 +589,8 @@ isert_alloc_fastreg_pool(struct isert_conn *isert_conn)
 
 	isert_conn->fr_pool_size = 0;
 	for (i = 0; i < tag_num; i++) {
-		fr_desc = isert_alloc_fr_desc(device->pd);
+		fr_desc = isert_alloc_fr_desc(device->pd,
+					      isert_conn->pi_support);
 		if (IS_ERR(fr_desc)) {
 			ret = PTR_ERR(fr_desc);
 			goto err;
@@ -2727,20 +2737,8 @@ isert_handle_prot_cmd(struct isert_conn *isert_conn,
 		      struct isert_cmd *isert_cmd,
 		      struct isert_rdma_wr *wr)
 {
-	struct isert_device *device = isert_conn->device;
 	struct se_cmd *se_cmd = &isert_cmd->iscsi_cmd->se_cmd;
 	int ret;
-
-	if (!wr->fr_desc->pi_ctx) {
-		ret = isert_create_pi_ctx(wr->fr_desc,
-					  device->ib_device,
-					  device->pd);
-		if (ret) {
-			isert_err("conn %p failed to allocate pi_ctx\n",
-				  isert_conn);
-			return ret;
-		}
-	}
 
 	if (se_cmd->t_prot_sg) {
 		ret = isert_map_data_buf(isert_conn, isert_cmd,
