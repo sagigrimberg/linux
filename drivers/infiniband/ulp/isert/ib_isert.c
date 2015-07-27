@@ -1640,10 +1640,11 @@ isert_rcv_completion(struct iser_rx_desc *desc,
 }
 
 static int
-isert_map_data_buf(struct isert_conn *isert_conn, struct isert_cmd *isert_cmd,
+isert_map_data_buf(struct isert_cmd *isert_cmd,
 		   struct scatterlist *sg, u32 nents, u32 length, u32 offset,
 		   enum iser_ib_op_code op, struct isert_data_buf *data)
 {
+	struct isert_conn *isert_conn = isert_cmd->conn;
 	struct ib_device *ib_dev = isert_conn->cm_id->device;
 
 	data->dma_dir = op == ISER_IB_RDMA_WRITE ?
@@ -2444,7 +2445,7 @@ isert_map_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	isert_cmd->tx_desc.isert_cmd = isert_cmd;
 
 	offset = wr->iser_ib_op == ISER_IB_RDMA_READ ? cmd->write_data_done : 0;
-	ret = isert_map_data_buf(isert_conn, isert_cmd, se_cmd->t_data_sg,
+	ret = isert_map_data_buf(isert_cmd, se_cmd->t_data_sg,
 				 se_cmd->t_data_nents, se_cmd->data_length,
 				 offset, wr->iser_ib_op, &wr->data);
 	if (ret)
@@ -2731,7 +2732,7 @@ isert_handle_prot_cmd(struct isert_conn *isert_conn,
 	int ret;
 
 	if (se_cmd->t_prot_sg) {
-		ret = isert_map_data_buf(isert_conn, isert_cmd,
+		ret = isert_map_data_buf(isert_cmd,
 					 se_cmd->t_prot_sg,
 					 se_cmd->t_prot_nents,
 					 se_cmd->prot_length,
@@ -2786,7 +2787,7 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	isert_cmd->tx_desc.isert_cmd = isert_cmd;
 
 	offset = wr->iser_ib_op == ISER_IB_RDMA_READ ? cmd->write_data_done : 0;
-	ret = isert_map_data_buf(isert_conn, isert_cmd, se_cmd->t_data_sg,
+	ret = isert_map_data_buf(isert_cmd, se_cmd->t_data_sg,
 				 se_cmd->t_data_nents, se_cmd->data_length,
 				 offset, wr->iser_ib_op, &wr->data);
 	if (ret)
