@@ -1572,12 +1572,12 @@ static void update_gids_task(struct work_struct *work)
 	int is_bonded = mlx4_is_bonded(dev);
 
 	if (!gw->dev->ib_active)
-		return;
+		goto free;
 
 	mailbox = mlx4_alloc_cmd_mailbox(dev);
 	if (IS_ERR(mailbox)) {
 		pr_warn("update gid table failed %ld\n", PTR_ERR(mailbox));
-		return;
+		goto free;
 	}
 
 	gids = mailbox->buf;
@@ -1595,6 +1595,8 @@ static void update_gids_task(struct work_struct *work)
 					       IB_EVENT_GID_CHANGE);
 
 	mlx4_free_cmd_mailbox(dev, mailbox);
+
+free:
 	kfree(gw);
 }
 
@@ -1608,7 +1610,7 @@ static void reset_gids_task(struct work_struct *work)
 	struct mlx4_dev	*dev = gw->dev->dev;
 
 	if (!gw->dev->ib_active)
-		return;
+		goto free;
 
 	mailbox = mlx4_alloc_cmd_mailbox(dev);
 	if (IS_ERR(mailbox)) {
