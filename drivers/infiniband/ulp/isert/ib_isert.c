@@ -1682,7 +1682,28 @@ isert_unmap_data_buf(struct isert_conn *isert_conn, struct isert_data_buf *data)
 	memset(data, 0, sizeof(*data));
 }
 
+static struct isert_fr_desc *
+isert_fr_desc_get(struct isert_conn *isert_conn)
+{
+	struct isert_fr_desc *fr_desc;
 
+	spin_lock_bh(&isert_conn->pool_lock);
+	fr_desc = list_first_entry(&isert_conn->fr_pool,
+				   struct isert_fr_desc, list);
+	list_del(&fr_desc->list);
+	spin_unlock_bh(&isert_conn->pool_lock);
+
+	return fr_desc;
+}
+
+static void
+isert_fr_desc_put(struct isert_conn *isert_conn,
+		  struct isert_fr_desc *fr_desc)
+{
+	spin_lock_bh(&isert_conn->pool_lock);
+	list_add(&fr_desc->list, &isert_conn->fr_pool);
+	spin_unlock_bh(&isert_conn->pool_lock);
+}
 
 static void
 isert_unmap_cmd(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
@@ -1722,9 +1743,8 @@ isert_unreg_rdma(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
 			isert_unmap_data_buf(isert_conn, &wr->prot);
 			wr->fr_desc->ind &= ~ISERT_PROTECTED;
 		}
-		spin_lock_bh(&isert_conn->pool_lock);
-		list_add_tail(&wr->fr_desc->list, &isert_conn->fr_pool);
-		spin_unlock_bh(&isert_conn->pool_lock);
+
+		isert_fr_desc_put(isert_conn, wr->fr_desc);
 		wr->fr_desc = NULL;
 	}
 
@@ -2777,12 +2797,10 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	struct se_cmd *se_cmd = &cmd->se_cmd;
 	struct isert_cmd *isert_cmd = iscsit_priv_cmd(cmd);
 	struct isert_conn *isert_conn = conn->context;
-	struct isert_fr_desc *fr_desc = NULL;
 	struct ib_rdma_wr *rdma_wr;
 	struct ib_sge *ib_sg;
 	u32 offset;
 	int ret = 0;
-	unsigned long flags;
 
 	isert_cmd->tx_desc.isert_cmd = isert_cmd;
 
@@ -2793,16 +2811,10 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	if (ret)
 		return ret;
 
-	if (wr->data.dma_nents != 1 || isert_prot_cmd(isert_conn, se_cmd)) {
-		spin_lock_irqsave(&isert_conn->pool_lock, flags);
-		fr_desc = list_first_entry(&isert_conn->fr_pool,
-					   struct isert_fr_desc, list);
-		list_del(&fr_desc->list);
-		spin_unlock_irqrestore(&isert_conn->pool_lock, flags);
-		wr->fr_desc = fr_desc;
-	}
+	if (wr->data.dma_nents != 1 || isert_prot_cmd(isert_conn, se_cmd))
+		wr->fr_desc = isert_fr_desc_get(isert_conn);
 
-	ret = isert_fast_reg_mr(isert_conn, fr_desc, &wr->data,
+	ret = isert_fast_reg_mr(isert_conn, wr->fr_desc, &wr->data,
 				ISERT_DATA_KEY_VALID, &wr->ib_sg[DATA]);
 	if (ret)
 		goto unmap_cmd;
@@ -2844,11 +2856,9 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	return 0;
 
 unmap_cmd:
-	if (fr_desc) {
-		spin_lock_irqsave(&isert_conn->pool_lock, flags);
-		list_add_tail(&fr_desc->list, &isert_conn->fr_pool);
-		spin_unlock_irqrestore(&isert_conn->pool_lock, flags);
-	}
+	if (wr->fr_desc)
+		isert_fr_desc_put(isert_conn, wr->fr_desc);
+
 	isert_unmap_data_buf(isert_conn, &wr->data);
 
 	return ret;
