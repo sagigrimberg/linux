@@ -1641,45 +1641,120 @@ isert_rcv_completion(struct ib_wc *wc)
 }
 
 static int
-isert_map_data_buf(struct isert_cmd *isert_cmd,
-		   struct scatterlist *sg, u32 nents, u32 length, u32 offset,
-		   enum dma_data_direction dma_dir,
-		   struct isert_data_buf *data)
+isert_map_buf(struct ib_device *device,
+	      struct scatterlist *sg,
+	      u32 nents, u32 length, u32 offset,
+	      enum dma_data_direction dir,
+	      struct isert_data_buf *buf)
 {
-	struct isert_conn *isert_conn = isert_cmd->conn;
-	struct ib_device *ib_dev = isert_conn->cm_id->device;
+	buf->offset = offset;
+	buf->len = length - offset;
+	buf->sg_off = buf->offset >> ilog2(PAGE_SIZE);
+	buf->sg = &sg[buf->sg_off];
+	buf->nents = min_t(unsigned int, nents - buf->sg_off,
+					 ISCSI_ISER_SG_TABLESIZE);
+	buf->len = min_t(unsigned int, buf->len,
+			 ISCSI_ISER_SG_TABLESIZE * PAGE_SIZE);
 
-	data->dma_dir = dma_dir;
-	data->len = length - offset;
-	data->offset = offset;
-	data->sg_off = data->offset / PAGE_SIZE;
-
-	data->sg = &sg[data->sg_off];
-	data->nents = min_t(unsigned int, nents - data->sg_off,
-					  ISCSI_ISER_SG_TABLESIZE);
-	data->len = min_t(unsigned int, data->len, ISCSI_ISER_SG_TABLESIZE *
-					PAGE_SIZE);
-
-	data->dma_nents = ib_dma_map_sg(ib_dev, data->sg, data->nents,
-					data->dma_dir);
-	if (unlikely(!data->dma_nents)) {
-		isert_err("Cmd: unable to dma map SGs %p\n", sg);
+	buf->dma_nents = ib_dma_map_sg(device, buf->sg, buf->nents, dir);
+	if (unlikely(!buf->dma_nents)) {
+		isert_err("unable to dma map SGs %p\n", sg);
 		return -EINVAL;
 	}
 
+	return 0;
+}
+
+static inline u32
+isert_data_offset(enum dma_data_direction dir, struct iscsi_cmd *cmd)
+{
+	return (dir == DMA_FROM_DEVICE) ? cmd->write_data_done :
+					  cmd->read_data_done;
+}
+
+static inline u32
+isert_prot_offset(enum dma_data_direction dir, struct iscsi_cmd *cmd)
+{
+	u32 block_size = cmd->se_cmd.se_dev->dev_attrib.block_size;
+	u32 offset = isert_data_offset(dir, cmd);
+
+	return offset >> (ilog2(block_size) * 8);
+}
+
+static int
+isert_map_data_buf(struct isert_cmd *isert_cmd)
+{
+	struct ib_device *device = isert_cmd->conn->device->ib_device;
+	struct isert_rdma_ctx *ctx = &isert_cmd->rdma_ctx;
+	struct iscsi_cmd *cmd = isert_cmd->iscsi_cmd;
+	struct se_cmd *se_cmd = &cmd->se_cmd;
+	struct isert_data_buf *buf = &ctx->data;
+	int err;
+
+	err = isert_map_buf(device, se_cmd->t_data_sg,
+			    se_cmd->t_data_nents, se_cmd->data_length,
+			    isert_data_offset(ctx->dma_dir, cmd),
+			    ctx->dma_dir, buf);
+	if (unlikely(err))
+		return -EINVAL;
+
 	isert_dbg("Mapped cmd: %p count: %u sg: %p sg_nents: %u rdma_len %d\n",
-		  isert_cmd, data->dma_nents, data->sg, data->nents, data->len);
+		  isert_cmd, buf->dma_nents, buf->sg, buf->nents, buf->len);
+
+	return 0;
+}
+
+static int
+isert_map_prot_buf(struct isert_cmd *isert_cmd)
+{
+	struct ib_device *device = isert_cmd->conn->device->ib_device;
+	struct isert_rdma_ctx *ctx = &isert_cmd->rdma_ctx;
+	struct iscsi_cmd *cmd = isert_cmd->iscsi_cmd;
+	struct se_cmd *se_cmd = &cmd->se_cmd;
+	struct isert_data_buf *buf = &ctx->prot;
+	int err;
+
+	err = isert_map_buf(device, se_cmd->t_prot_sg,
+			    se_cmd->t_prot_nents, se_cmd->prot_length,
+			    isert_prot_offset(ctx->dma_dir, cmd),
+			    ctx->dma_dir, buf);
+	if (unlikely(err))
+		return -EINVAL;
+
+	isert_dbg("Mapped cmd: %p count: %u sg: %p sg_nents: %u rdma_len %d\n",
+		  isert_cmd, buf->dma_nents, buf->sg, buf->nents, buf->len);
 
 	return 0;
 }
 
 static void
-isert_unmap_data_buf(struct isert_conn *isert_conn, struct isert_data_buf *data)
+isert_unmap_buf(struct ib_device *device,
+		struct isert_data_buf *data,
+		enum dma_data_direction dir)
 {
-	struct ib_device *ib_dev = isert_conn->cm_id->device;
-
-	ib_dma_unmap_sg(ib_dev, data->sg, data->nents, data->dma_dir);
+	ib_dma_unmap_sg(device, data->sg, data->nents, dir);
+	/* TODO: Remove this redundant memset */
 	memset(data, 0, sizeof(*data));
+}
+
+static void
+isert_unmap_data_buf(struct isert_cmd *isert_cmd)
+{
+	struct isert_data_buf *buf = &isert_cmd->rdma_ctx.data;
+	struct ib_device *device = isert_cmd->conn->device->ib_device;
+	enum dma_data_direction dir = isert_cmd->rdma_ctx.dma_dir;
+
+	isert_unmap_buf(device, buf, dir);
+}
+
+static void
+isert_unmap_prot_buf(struct isert_cmd *isert_cmd)
+{
+	struct isert_data_buf *buf = &isert_cmd->rdma_ctx.prot;
+	struct ib_device *device = isert_cmd->conn->device->ib_device;
+	enum dma_data_direction dir = isert_cmd->rdma_ctx.dma_dir;
+
+	isert_unmap_buf(device, buf, dir);
 }
 
 static struct isert_fr_desc *
@@ -1714,7 +1789,7 @@ isert_unmap_cmd(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
 
 	if (ctx->data.sg) {
 		isert_dbg("Cmd %p unmap_sg op\n", isert_cmd);
-		isert_unmap_data_buf(isert_conn, &ctx->data);
+		isert_unmap_data_buf(isert_cmd);
 	}
 
 	if (ctx->rdma_wr) {
@@ -1740,7 +1815,7 @@ isert_unreg_rdma(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
 	if (ctx->fr_desc) {
 		isert_dbg("Cmd %p free fr_desc %p\n", isert_cmd, ctx->fr_desc);
 		if (ctx->fr_desc->ind & ISERT_PROTECTED) {
-			isert_unmap_data_buf(isert_conn, &ctx->prot);
+			isert_unmap_prot_buf(isert_cmd);
 			ctx->fr_desc->ind &= ~ISERT_PROTECTED;
 		}
 
@@ -1750,7 +1825,7 @@ isert_unreg_rdma(struct isert_cmd *isert_cmd, struct isert_conn *isert_conn)
 
 	if (ctx->data.sg) {
 		isert_dbg("Cmd %p unmap_sg op\n", isert_cmd);
-		isert_unmap_data_buf(isert_conn, &ctx->data);
+		isert_unmap_data_buf(isert_cmd);
 	}
 
 	ctx->ib_sge = NULL;
@@ -2451,7 +2526,6 @@ static int
 isert_map_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	       struct isert_rdma_ctx *ctx)
 {
-	struct se_cmd *se_cmd = &cmd->se_cmd;
 	struct isert_cmd *isert_cmd = iscsit_priv_cmd(cmd);
 	struct isert_conn *isert_conn = conn->context;
 	struct isert_data_buf *data = &ctx->data;
@@ -2462,10 +2536,7 @@ isert_map_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 
 	isert_cmd->tx_desc.isert_cmd = isert_cmd;
 
-	offset = ctx->dma_dir == DMA_FROM_DEVICE ? cmd->write_data_done : 0;
-	ret = isert_map_data_buf(isert_cmd, se_cmd->t_data_sg,
-				 se_cmd->t_data_nents, se_cmd->data_length,
-				 offset, ctx->dma_dir, &ctx->data);
+	ret = isert_map_data_buf(isert_cmd);
 	if (ret)
 		return ret;
 
@@ -2526,7 +2597,7 @@ isert_map_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 
 	return 0;
 unmap_cmd:
-	isert_unmap_data_buf(isert_conn, data);
+	isert_unmap_data_buf(isert_cmd);
 
 	return ret;
 }
@@ -2750,11 +2821,7 @@ isert_handle_prot_cmd(struct isert_conn *isert_conn,
 	int ret;
 
 	if (se_cmd->t_prot_sg) {
-		ret = isert_map_data_buf(isert_cmd,
-					 se_cmd->t_prot_sg,
-					 se_cmd->t_prot_nents,
-					 se_cmd->prot_length,
-					 0, ctx->dma_dir, &ctx->prot);
+		ret = isert_map_prot_buf(isert_cmd);
 		if (ret) {
 			isert_err("conn %p failed to map protection buffer\n",
 				  isert_conn);
@@ -2783,7 +2850,7 @@ isert_handle_prot_cmd(struct isert_conn *isert_conn,
 
 unmap_prot_cmd:
 	if (se_cmd->t_prot_sg)
-		isert_unmap_data_buf(isert_conn, &ctx->prot);
+		isert_unmap_prot_buf(isert_cmd);
 
 	return ret;
 }
@@ -2797,15 +2864,11 @@ isert_reg_rdma(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	struct isert_conn *isert_conn = conn->context;
 	struct ib_rdma_wr *rdma_wr;
 	struct ib_sge *ib_sg;
-	u32 offset;
 	int ret = 0;
 
 	isert_cmd->tx_desc.isert_cmd = isert_cmd;
 
-	offset = ctx->dma_dir == DMA_FROM_DEVICE ? cmd->write_data_done : 0;
-	ret = isert_map_data_buf(isert_cmd, se_cmd->t_data_sg,
-				 se_cmd->t_data_nents, se_cmd->data_length,
-				 offset, ctx->dma_dir, &ctx->data);
+	ret = isert_map_data_buf(isert_cmd);
 	if (ret)
 		return ret;
 
@@ -2857,7 +2920,7 @@ unmap_cmd:
 	if (ctx->fr_desc)
 		isert_fr_desc_put(isert_conn, ctx->fr_desc);
 
-	isert_unmap_data_buf(isert_conn, &ctx->data);
+	isert_unmap_data_buf(isert_cmd);
 
 	return ret;
 }
