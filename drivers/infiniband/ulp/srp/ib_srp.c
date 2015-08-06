@@ -69,7 +69,7 @@ static unsigned int cmd_sg_entries;
 static unsigned int indirect_sg_entries;
 static bool allow_ext_sg;
 static bool prefer_fr = true;
-static bool register_always = true;
+static int register_always = true;
 static int topspin_workarounds = 1;
 
 module_param(srp_sg_tablesize, uint, 0444);
@@ -95,7 +95,7 @@ module_param(prefer_fr, bool, 0444);
 MODULE_PARM_DESC(prefer_fr,
 "Whether to use fast registration if both FMR and fast registration are supported");
 
-module_param(register_always, bool, 0444);
+module_param(register_always, int, 0444);
 MODULE_PARM_DESC(register_always,
 		 "Use memory registration even for contiguous memory regions");
 
@@ -3414,12 +3414,13 @@ static void srp_add_one(struct ib_device *device)
 			    device->map_phys_fmr && device->unmap_fmr);
 	srp_dev->has_fr = (dev_attr->device_cap_flags &
 			   IB_DEVICE_MEM_MGT_EXTENSIONS);
-	if (!srp_dev->has_fmr && !srp_dev->has_fr)
+	if (!srp_dev->has_fmr && !srp_dev->has_fr) {
 		dev_warn(&device->dev, "neither FMR nor FR is supported\n");
-
-	srp_dev->use_fast_reg = (srp_dev->has_fr &&
-				 (!srp_dev->has_fmr || prefer_fr));
-	srp_dev->use_fmr = !srp_dev->use_fast_reg && srp_dev->has_fmr;
+	} else if (register_always >= 0) {
+		srp_dev->use_fast_reg = (srp_dev->has_fr &&
+					 (!srp_dev->has_fmr || prefer_fr));
+		srp_dev->use_fmr = !srp_dev->use_fast_reg && srp_dev->has_fmr;
+	}
 
 	/*
 	 * Use the smallest page size supported by the HCA, down to a
@@ -3452,7 +3453,7 @@ static void srp_add_one(struct ib_device *device)
 	if (IS_ERR(srp_dev->pd))
 		goto free_dev;
 
-	if (!register_always || (!srp_dev->has_fmr && !srp_dev->has_fr)) {
+	if (register_always <= 0 || (!srp_dev->has_fmr && !srp_dev->has_fr)) {
 		srp_dev->global_mr = ib_get_dma_mr(srp_dev->pd,
 						   IB_ACCESS_LOCAL_WRITE |
 						   IB_ACCESS_REMOTE_READ |
