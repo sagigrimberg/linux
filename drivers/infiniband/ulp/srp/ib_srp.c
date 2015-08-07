@@ -1283,7 +1283,7 @@ static int srp_map_finish_fmr(struct srp_map_state *state,
 	struct ib_pool_fmr *fmr;
 	u64 io_addr = 0;
 
-	if (state->fmr.next >= state->fmr.end)
+	if (WARN_ON_ONCE(state->fmr.next >= state->fmr.end))
 		return -ENOMEM;
 
 	fmr = ib_fmr_pool_map_phys(ch->fmr_pool, state->pages,
@@ -1310,7 +1310,7 @@ static int srp_map_finish_fr(struct srp_map_state *state,
 	struct srp_fr_desc *desc;
 	u32 rkey;
 
-	if (state->fr.next >= state->fr.end)
+	if (WARN_ON_ONCE(state->fr.next >= state->fr.end))
 		return -ENOMEM;
 
 	desc = srp_fr_pool_get(ch->fr_pool);
