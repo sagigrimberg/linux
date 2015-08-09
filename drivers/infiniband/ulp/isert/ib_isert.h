@@ -35,11 +35,6 @@
 #define ISER_FASTREG_LI_WRID		0xffffffffffffffffULL
 #define ISER_BEACON_WRID               0xfffffffffffffffeULL
 
-enum isert_desc_type {
-	ISCSI_TX_CONTROL,
-	ISCSI_TX_DATAIN
-};
-
 enum iser_ib_op_code {
 	ISER_IB_RECV,
 	ISER_IB_SEND,
@@ -67,7 +62,6 @@ struct iser_rx_desc {
 struct iser_tx_desc {
 	struct iser_hdr iser_header;
 	struct iscsi_hdr iscsi_header;
-	enum isert_desc_type type;
 	u64		dma_addr;
 	struct ib_sge	tx_sg[2];
 	int		num_sge;
@@ -106,7 +100,7 @@ enum {
 	SIG = 2,
 };
 
-struct isert_rdma_wr {
+struct isert_rdma_ctx {
 	struct isert_cmd	*isert_cmd;
 	enum iser_ib_op_code	iser_ib_op;
 	struct ib_sge		*ib_sge;
@@ -131,7 +125,7 @@ struct isert_cmd {
 	struct iscsi_cmd	*iscsi_cmd;
 	struct iser_tx_desc	tx_desc;
 	struct iser_rx_desc	*rx_desc;
-	struct isert_rdma_wr	rdma_wr;
+	struct isert_rdma_ctx	rdma_ctx;
 	struct work_struct	comp_work;
 	struct scatterlist	sg;
 };
@@ -206,7 +200,7 @@ struct isert_device {
 	struct ib_device_attr	dev_attr;
 	int			(*reg_rdma_mem)(struct iscsi_conn *conn,
 						    struct iscsi_cmd *cmd,
-						    struct isert_rdma_wr *wr);
+						    struct isert_rdma_ctx *ctx);
 	void			(*unreg_rdma_mem)(struct isert_cmd *isert_cmd,
 						  struct isert_conn *isert_conn);
 };
