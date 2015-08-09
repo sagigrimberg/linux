@@ -35,13 +35,6 @@
 #define ISER_FASTREG_LI_WRID		0xffffffffffffffffULL
 #define ISER_BEACON_WRID               0xfffffffffffffffeULL
 
-enum iser_ib_op_code {
-	ISER_IB_RECV,
-	ISER_IB_SEND,
-	ISER_IB_RDMA_WRITE,
-	ISER_IB_RDMA_READ,
-};
-
 enum iser_conn_state {
 	ISER_CONN_INIT,
 	ISER_CONN_UP,
@@ -102,7 +95,7 @@ enum {
 
 struct isert_rdma_ctx {
 	struct isert_cmd	*isert_cmd;
-	enum iser_ib_op_code	iser_ib_op;
+	enum dma_data_direction dma_dir;
 	struct ib_sge		*ib_sge;
 	struct ib_sge		s_ib_sge;
 	int			rdma_wr_num;
