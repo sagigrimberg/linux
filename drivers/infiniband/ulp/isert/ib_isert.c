@@ -1590,15 +1590,17 @@ isert_rx_do_work(struct iser_rx_desc *rx_desc, struct isert_conn *isert_conn)
 }
 
 static void
-isert_rcv_completion(struct iser_rx_desc *desc,
-		     struct isert_conn *isert_conn,
-		     u32 xfer_len)
+isert_rcv_completion(struct ib_wc *wc)
 {
-	struct ib_device *ib_dev = isert_conn->cm_id->device;
+	struct isert_conn *isert_conn = wc->qp->qp_context;
+	struct ib_device *ib_dev = isert_conn->device->ib_device;
+	struct iser_rx_desc *desc;
 	struct iscsi_hdr *hdr;
+	u32 xfer_len = wc->byte_len;
 	u64 rx_dma;
 	int rx_buflen;
 
+	desc = (struct iser_rx_desc *)(uintptr_t)wc->wr_id;
 	if ((char *)desc == isert_conn->login_req_buf) {
 		rx_dma = isert_conn->login_req_dma;
 		rx_buflen = ISER_RX_LOGIN_SIZE;
@@ -2020,12 +2022,16 @@ isert_response_completion(struct iser_tx_desc *tx_desc,
 }
 
 static void
-isert_snd_completion(struct iser_tx_desc *tx_desc,
-		      struct isert_conn *isert_conn)
+isert_snd_completion(struct ib_wc *wc)
 {
-	struct ib_device *ib_dev = isert_conn->cm_id->device;
-	struct isert_cmd *isert_cmd = tx_desc->isert_cmd;
+	struct isert_conn *isert_conn = wc->qp->qp_context;
+	struct ib_device *ib_dev = isert_conn->device->ib_device;
+	struct isert_cmd *isert_cmd;
+	struct iser_tx_desc *tx_desc;
 	struct isert_rdma_ctx *ctx;
+
+	tx_desc = (struct iser_tx_desc *)(uintptr_t)wc->wr_id;
+	isert_cmd = tx_desc->isert_cmd;
 
 	if (!isert_cmd) {
 		isert_unmap_tx_desc(tx_desc, ib_dev);
@@ -2077,8 +2083,10 @@ is_isert_tx_desc(struct isert_conn *isert_conn, void *wr_id)
 }
 
 static void
-isert_cq_comp_err(struct isert_conn *isert_conn, struct ib_wc *wc)
+isert_cq_comp_err(struct ib_wc *wc)
 {
+	struct isert_conn *isert_conn = wc->qp->qp_context;
+
 	if (wc->wr_id == ISER_BEACON_WRID) {
 		isert_info("conn %p completing wait_comp_err\n",
 			   isert_conn);
@@ -2104,19 +2112,11 @@ isert_cq_comp_err(struct isert_conn *isert_conn, struct ib_wc *wc)
 static void
 isert_handle_wc(struct ib_wc *wc)
 {
-	struct isert_conn *isert_conn;
-	struct iser_tx_desc *tx_desc;
-	struct iser_rx_desc *rx_desc;
-
-	isert_conn = wc->qp->qp_context;
 	if (likely(wc->status == IB_WC_SUCCESS)) {
-		if (wc->opcode == IB_WC_RECV) {
-			rx_desc = (struct iser_rx_desc *)(uintptr_t)wc->wr_id;
-			isert_rcv_completion(rx_desc, isert_conn, wc->byte_len);
-		} else {
-			tx_desc = (struct iser_tx_desc *)(uintptr_t)wc->wr_id;
-			isert_snd_completion(tx_desc, isert_conn);
-		}
+		if (wc->opcode == IB_WC_RECV)
+			isert_rcv_completion(wc);
+		else
+			isert_snd_completion(wc);
 	} else {
 		if (wc->status != IB_WC_WR_FLUSH_ERR)
 			isert_err("%s (%d): wr id %llx vend_err %x\n",
@@ -2128,7 +2128,7 @@ isert_handle_wc(struct ib_wc *wc)
 				  wc->wr_id);
 
 		if (wc->wr_id != ISER_FASTREG_LI_WRID)
-			isert_cq_comp_err(isert_conn, wc);
+			isert_cq_comp_err(wc);
 	}
 }
 
