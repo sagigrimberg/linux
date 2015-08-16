@@ -201,7 +201,7 @@ static void iser_free_device_ib_res(struct iser_device *device)
 
 	(void)ib_unregister_event_handler(&device->event_handler);
 	(void)ib_dereg_mr(device->mr);
-	(void)ib_dealloc_pd(device->pd);
+	ib_dealloc_pd(device->pd);
 
 	kfree(device->comps);
 	device->comps = NULL;
@@ -1016,7 +1016,7 @@ int iser_post_recvl(struct iser_conn *iser_conn)
 
 	sge.addr   = iser_conn->login_resp_dma;
 	sge.length = ISER_RX_LOGIN_SIZE;
-	sge.lkey   = ib_conn->device->mr->lkey;
+	sge.lkey   = ib_conn->device->pd->local_dma_lkey;
 
 	rx_wr.wr_id   = (uintptr_t)iser_conn->login_resp_buf;
 	rx_wr.sg_list = &sge;
