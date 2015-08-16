@@ -55,8 +55,8 @@
 
 #define DRV_NAME	"ib_srp"
 #define PFX		DRV_NAME ": "
-#define DRV_VERSION	"1.0"
-#define DRV_RELDATE	"July 1, 2013"
+#define DRV_VERSION	"2.0"
+#define DRV_RELDATE	"July 26, 2015"
 
 MODULE_AUTHOR("Roland Dreier");
 MODULE_DESCRIPTION("InfiniBand SCSI RDMA Protocol initiator");
@@ -2175,7 +2175,7 @@ static uint32_t srp_compute_rq_tmo(struct ib_qp_attr *qp_attr, int attr_mask)
 }
 
 static void srp_cm_rep_handler(struct ib_cm_id *cm_id,
-			       struct srp_login_rsp *lrsp,
+			       const struct srp_login_rsp *lrsp,
 			       struct srp_rdma_ch *ch)
 {
 	struct srp_target_port *target = ch->target;
@@ -2761,6 +2761,13 @@ static int srp_sdev_count(struct Scsi_Host *host)
 	return c;
 }
 
+/*
+ * Return values:
+ * < 0 upon failure. Caller is responsible for SRP target port cleanup.
+ * 0 and target->state == SRP_TARGET_REMOVED if asynchronous target port
+ *    removal has been scheduled.
+ * 0 and target->state != SRP_TARGET_REMOVED upon success.
+ */
 static int srp_add_target(struct srp_host *host, struct srp_target_port *target)
 {
 	struct srp_rport_identifiers ids;
@@ -3266,7 +3273,7 @@ static ssize_t srp_create_target(struct device *dev,
 					srp_free_ch_ib(target, ch);
 					srp_free_req_data(target, ch);
 					target->ch_count = ch - target->ch;
-					break;
+					goto connected;
 				}
 			}
 
@@ -3276,6 +3283,7 @@ static ssize_t srp_create_target(struct device *dev,
 		node_idx++;
 	}
 
+connected:
 	target->scsi_host->nr_hw_queues = target->ch_count;
 
 	ret = srp_add_target(host, target);
@@ -3298,6 +3306,8 @@ out:
 	mutex_unlock(&host->add_target_mutex);
 
 	scsi_host_put(target->scsi_host);
+	if (ret < 0)
+		scsi_host_put(target->scsi_host);
 
 	return ret;
 
