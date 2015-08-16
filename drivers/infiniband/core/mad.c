@@ -3315,7 +3315,7 @@ error:
 	}
 }
 
-static void ib_mad_remove_device(struct ib_device *device)
+static void ib_mad_remove_device(struct ib_device *device, void *client_data)
 {
 	int i;
 

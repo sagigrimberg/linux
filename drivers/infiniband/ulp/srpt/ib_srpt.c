@@ -3246,7 +3246,7 @@ static void srpt_add_one(struct ib_device *device)
 	 * in the system as service_id; therefore, the target_id will change
 	 * if this HCA is gone bad and replaced by different HCA
 	 */
-	if (ib_cm_listen(sdev->cm_id, cpu_to_be64(srpt_service_guid), 0, NULL))
+	if (ib_cm_listen(sdev->cm_id, cpu_to_be64(srpt_service_guid), 0))
 		goto err_cm;
 
 	INIT_IB_EVENT_HANDLER(&sdev->event_handler, sdev->device,
@@ -3320,12 +3320,11 @@ err:
 /**
  * srpt_remove_one() - InfiniBand device removal callback function.
  */
-static void srpt_remove_one(struct ib_device *device)
+static void srpt_remove_one(struct ib_device *device, void *client_data)
 {
-	struct srpt_device *sdev;
+	struct srpt_device *sdev = client_data;
 	int i;
 
-	sdev = ib_get_client_data(device, &srpt_client);
 	if (!sdev) {
 		pr_info("%s(%s): nothing to do.\n", __func__, device->name);
 		return;

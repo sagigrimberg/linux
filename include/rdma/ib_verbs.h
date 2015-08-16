@@ -48,6 +48,7 @@
 #include <linux/rwsem.h>
 #include <linux/scatterlist.h>
 #include <linux/workqueue.h>
+#include <linux/socket.h>
 #include <uapi/linux/if_ether.h>
 
 #include <linux/atomic.h>
@@ -1550,6 +1551,8 @@ struct ib_device {
 
 	spinlock_t                    client_data_lock;
 	struct list_head              core_list;
+	/* Access to the client_data_list is protected by the client_data_lock
+	 * spinlock and the lists_rwsem read-write semaphore */
 	struct list_head              client_data_list;
 
 	struct ib_cache               cache;
@@ -1759,8 +1762,30 @@ struct ib_device {
 struct ib_client {
 	char  *name;
 	void (*add)   (struct ib_device *);
-	void (*remove)(struct ib_device *);
+	void (*remove)(struct ib_device *, void *client_data);
 
+	/* Returns the net_dev belonging to this ib_client and matching the
+	 * given parameters.
+	 * @dev:	 An RDMA device that the net_dev use for communication.
+	 * @port:	 A physical port number on the RDMA device.
+	 * @pkey:	 P_Key that the net_dev uses if applicable.
+	 * @gid:	 A GID that the net_dev uses to communicate.
+	 * @addr:	 An IP address the net_dev is configured with.
+	 * @client_data: The device's client data set by ib_set_client_data().
+	 *
+	 * An ib_client that implements a net_dev on top of RDMA devices
+	 * (such as IP over IB) should implement this callback, allowing the
+	 * rdma_cm module to find the right net_dev for a given request.
+	 *
+	 * The caller is responsible for calling dev_put on the returned
+	 * netdev. */
+	struct net_device *(*get_net_dev_by_params)(
+			struct ib_device *dev,
+			u8 port,
+			u16 pkey,
+			const union ib_gid *gid,
+			const struct sockaddr *addr,
+			void *client_data);
 	struct list_head list;
 };
 
@@ -3002,5 +3027,9 @@ static inline int ib_check_mr_access(int flags)
  */
 int ib_check_mr_status(struct ib_mr *mr, u32 check_mask,
 		       struct ib_mr_status *mr_status);
+
+struct net_device *ib_get_net_dev_by_params(struct ib_device *dev, u8 port,
+					    u16 pkey, const union ib_gid *gid,
+					    const struct sockaddr *addr);
 
 #endif /* IB_VERBS_H */
