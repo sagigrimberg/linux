@@ -687,7 +687,7 @@ static void prep_umr_reg_wqe(struct ib_pd *pd, struct ib_send_wr *wr,
 			     int access_flags)
 {
 	struct mlx5_ib_dev *dev = to_mdev(pd->device);
-	struct mlx5_umr_wr *umrwr = (struct mlx5_umr_wr *)&wr->wr.fast_reg;
+	struct mlx5_umr_wr *umrwr = umr_wr(wr);
 
 	sg->addr = dma;
 	sg->length = ALIGN(sizeof(u64) * n, 64);
@@ -715,7 +715,7 @@ static void prep_umr_reg_wqe(struct ib_pd *pd, struct ib_send_wr *wr,
 static void prep_umr_unreg_wqe(struct mlx5_ib_dev *dev,
 			       struct ib_send_wr *wr, u32 key)
 {
-	struct mlx5_umr_wr *umrwr = (struct mlx5_umr_wr *)&wr->wr.fast_reg;
+	struct mlx5_umr_wr *umrwr = umr_wr(wr);
 
 	wr->send_flags = MLX5_IB_SEND_UMR_UNREG | MLX5_IB_SEND_UMR_FAIL_IF_FREE;
 	wr->opcode = MLX5_IB_WR_UMR;
@@ -851,8 +851,8 @@ int mlx5_ib_update_mtt(struct mlx5_ib_mr *mr, u64 start_page_index, int npages,
 	int size;
 	__be64 *pas;
 	dma_addr_t dma;
-	struct ib_send_wr wr, *bad;
-	struct mlx5_umr_wr *umrwr = (struct mlx5_umr_wr *)&wr.wr.fast_reg;
+	struct ib_send_wr *bad;
+	struct mlx5_umr_wr wr;
 	struct ib_sge sg;
 	int err = 0;
 	const int page_index_alignment = MLX5_UMR_MTT_ALIGNMENT / sizeof(u64);
@@ -917,26 +917,26 @@ int mlx5_ib_update_mtt(struct mlx5_ib_mr *mr, u64 start_page_index, int npages,
 		dma_sync_single_for_device(ddev, dma, size, DMA_TO_DEVICE);
 
 		memset(&wr, 0, sizeof(wr));
-		wr.wr_id = (u64)(unsigned long)&umr_context;
+		wr.wr.wr_id = (u64)(unsigned long)&umr_context;
 
 		sg.addr = dma;
 		sg.length = ALIGN(npages * sizeof(u64),
 				MLX5_UMR_MTT_ALIGNMENT);
 		sg.lkey = dev->umrc.pd->local_dma_lkey;
 
-		wr.send_flags = MLX5_IB_SEND_UMR_FAIL_IF_FREE |
+		wr.wr.send_flags = MLX5_IB_SEND_UMR_FAIL_IF_FREE |
 				MLX5_IB_SEND_UMR_UPDATE_MTT;
-		wr.sg_list = &sg;
-		wr.num_sge = 1;
-		wr.opcode = MLX5_IB_WR_UMR;
-		umrwr->npages = sg.length / sizeof(u64);
-		umrwr->page_shift = PAGE_SHIFT;
-		umrwr->mkey = mr->mmr.key;
-		umrwr->target.offset = start_page_index;
+		wr.wr.sg_list = &sg;
+		wr.wr.num_sge = 1;
+		wr.wr.opcode = MLX5_IB_WR_UMR;
+		wr.npages = sg.length / sizeof(u64);
+		wr.page_shift = PAGE_SHIFT;
+		wr.mkey = mr->mmr.key;
+		wr.target.offset = start_page_index;
 
 		mlx5_ib_init_umr_context(&umr_context);
 		down(&umrc->sem);
-		err = ib_post_send(umrc->qp, &wr, &bad);
+		err = ib_post_send(umrc->qp, &wr.wr, &bad);
 		if (err) {
 			mlx5_ib_err(dev, "UMR post send failed, err %d\n", err);
 		} else {
