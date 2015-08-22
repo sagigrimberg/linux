@@ -1220,7 +1220,7 @@ static int svc_rdma_secure_port(struct svc_rqst *rqstp)
 int svc_rdma_fastreg(struct svcxprt_rdma *xprt,
 		     struct svc_rdma_fastreg_mr *frmr)
 {
-	struct ib_send_wr fastreg_wr;
+	struct ib_fast_reg_wr fastreg_wr;
 	u8 key;
 
 	/* Bump the key */
@@ -1229,16 +1229,16 @@ int svc_rdma_fastreg(struct svcxprt_rdma *xprt,
 
 	/* Prepare FASTREG WR */
 	memset(&fastreg_wr, 0, sizeof fastreg_wr);
-	fastreg_wr.opcode = IB_WR_FAST_REG_MR;
-	fastreg_wr.send_flags = IB_SEND_SIGNALED;
-	fastreg_wr.wr.fast_reg.iova_start = (unsigned long)frmr->kva;
-	fastreg_wr.wr.fast_reg.page_list = frmr->page_list;
-	fastreg_wr.wr.fast_reg.page_list_len = frmr->page_list_len;
-	fastreg_wr.wr.fast_reg.page_shift = PAGE_SHIFT;
-	fastreg_wr.wr.fast_reg.length = frmr->map_len;
-	fastreg_wr.wr.fast_reg.access_flags = frmr->access_flags;
-	fastreg_wr.wr.fast_reg.rkey = frmr->mr->lkey;
-	return svc_rdma_send(xprt, &fastreg_wr);
+	fastreg_wr.wr.opcode = IB_WR_FAST_REG_MR;
+	fastreg_wr.wr.send_flags = IB_SEND_SIGNALED;
+	fastreg_wr.iova_start = (unsigned long)frmr->kva;
+	fastreg_wr.page_list = frmr->page_list;
+	fastreg_wr.page_list_len = frmr->page_list_len;
+	fastreg_wr.page_shift = PAGE_SHIFT;
+	fastreg_wr.length = frmr->map_len;
+	fastreg_wr.access_flags = frmr->access_flags;
+	fastreg_wr.rkey = frmr->mr->lkey;
+	return svc_rdma_send(xprt, &fastreg_wr.wr);
 }
 
 int svc_rdma_send(struct svcxprt_rdma *xprt, struct ib_send_wr *wr)
