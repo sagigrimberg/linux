@@ -840,8 +840,8 @@ isert_create_qp(struct isert_conn *isert_conn,
 	attr.recv_cq = comp->cq;
 	attr.cap.max_send_wr = ISERT_QP_MAX_REQ_DTOS;
 	attr.cap.max_recv_wr = ISERT_QP_MAX_RECV_DTOS + 1;
-	attr.cap.max_send_sge = min_t(int, device->max_sge_wr,
-					   device->max_sge_rd);
+	attr.cap.max_send_sge = max(device->max_sge_wr,
+				    device->max_sge_rd);
 	attr.cap.max_recv_sge = 1;
 	attr.sq_sig_type = IB_SIGNAL_REQ_WR;
 	attr.qp_type = IB_QPT_RC;
@@ -1069,7 +1069,7 @@ isert_create_device_ib_res(struct isert_device *device)
 	 * have at least two SGEs for outgoing control PDU responses.
 	 */
 	device->max_sge_wr = dev_attr->max_sge;
-	device->max_sge_rd = max(2, dev_attr->max_sge_rd - 2);
+	device->max_sge_rd = dev_attr->max_sge_rd;
 	device->max_reg_pages = min_t(unsigned int,
 				      ISCSI_ISER_SG_TABLESIZE,
 				      dev_attr->max_fast_reg_page_list_len);
