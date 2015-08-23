@@ -393,12 +393,12 @@ isert_prep_rdma(struct isert_cmd *isert_cmd)
 	int err;
 
 	err = isert_map_data_buf(isert_cmd);
-	if (err)
+	if (unlikely(err))
 		return err;
 
 	if (se_cmd->t_prot_sg) {
 		err = isert_map_prot_buf(isert_cmd);
-		if (err)
+		if (unlikely(err))
 			goto err_unmap_data;
 	}
 
@@ -425,14 +425,14 @@ isert_prep_rdma(struct isert_cmd *isert_cmd)
 	}
 
 	ctx->sges = kcalloc(ctx->nsge, sizeof(*ctx->sges), GFP_KERNEL);
-	if (!ctx->sges) {
+	if (unlikely(!ctx->sges)) {
 		err = -ENOMEM;
 		goto err_unmap_prot;
 	}
 
 	ctx->nrdmas = DIV_ROUND_UP(ctx->nsge, ctx->nsge_per_rdma);
 	ctx->rdmas = kcalloc(ctx->nrdmas, sizeof(*ctx->rdmas), GFP_KERNEL);
-	if (!ctx->rdmas) {
+	if (unlikely(!ctx->rdmas)) {
 		err = -ENOMEM;
 		goto err_rdmas;
 	}
@@ -636,7 +636,7 @@ isert_reg_mem(struct isert_cmd *isert_cmd,
 		data_sge = sge;
 
 	err = isert_reg_data_sg(isert_cmd, desc, data_sge);
-	if (err)
+	if (unlikely(err))
 		return err;
 
 	if (isert_prot_cmd(isert_cmd)) {
@@ -644,13 +644,13 @@ isert_reg_mem(struct isert_cmd *isert_cmd,
 
 		if (se_cmd->t_prot_sg) {
 			err = isert_reg_prot_sg(isert_cmd, desc, prot_sge);
-			if (err)
+			if (unlikely(err))
 				return err;
 		}
 
 		err = isert_reg_sig_mr(isert_cmd, desc, data_sge,
 				       prot_sge, sge);
-		if (err)
+		if (unlikely(err))
 			return err;
 		desc->sig_protected = 1;
 	}
@@ -670,13 +670,15 @@ isert_reg_rdma(struct isert_cmd *isert_cmd)
 	int i, err;
 
 	err = isert_prep_rdma(isert_cmd);
-	if (err)
+	if (unlikely(err))
 		return err;
 
 	for (i = 0; i < ctx->nsge; i++) {
 		struct ib_sge *sge = &ctx->sges[i];
 
 		err = isert_reg_mem(isert_cmd, sge);
+		if (unlikely(err))
+			return err;
 	}
 
 	isert_build_rdmas(isert_cmd);
