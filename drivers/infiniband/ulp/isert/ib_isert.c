@@ -792,22 +792,6 @@ isert_qp_event_callback(struct ib_event *e, void *context)
 	}
 }
 
-static int
-isert_query_device(struct ib_device *ib_dev, struct ib_device_attr *devattr)
-{
-	int ret;
-
-	ret = ib_query_device(ib_dev, devattr);
-	if (ret) {
-		isert_err("ib_query_device() failed: %d\n", ret);
-		return ret;
-	}
-	isert_dbg("devattr->max_sge: %d\n", devattr->max_sge);
-	isert_dbg("devattr->max_sge_rd: %d\n", devattr->max_sge_rd);
-
-	return 0;
-}
-
 static struct isert_comp *
 isert_comp_get(struct isert_conn *isert_conn)
 {
@@ -854,8 +838,8 @@ isert_create_qp(struct isert_conn *isert_conn,
 	attr.recv_cq = comp->cq;
 	attr.cap.max_send_wr = ISERT_QP_MAX_REQ_DTOS;
 	attr.cap.max_recv_wr = ISERT_QP_MAX_RECV_DTOS + 1;
-	attr.cap.max_send_sge = device->max_sge_wr;
-
+	attr.cap.max_send_sge = min_t(int, device->max_sge_wr,
+					   device->max_sge_rd);
 	attr.cap.max_recv_sge = 1;
 	attr.sq_sig_type = IB_SIGNAL_REQ_WR;
 	attr.qp_type = IB_QPT_RC;
@@ -991,9 +975,9 @@ isert_alloc_comps(struct isert_device *device,
 	device->comps_used = min(ISERT_MAX_CQ, min_t(int, num_online_cpus(),
 				 device->ib_device->num_comp_vectors));
 
-	isert_info("Using %d CQs, %s supports %d vectors pi_capable %d\n",
-		   device->comps_used, device->ib_device->name,
-		   device->ib_device->num_comp_vectors, device->pi_capable);
+	isert_info("device %s: allocating %d CQs (supports %d vectors)\n",
+		   device->ib_device->name, device->comps_used,
+		   device->ib_device->num_comp_vectors);
 
 	device->comps = kcalloc(device->comps_used, sizeof(struct isert_comp),
 				GFP_KERNEL);
@@ -1059,9 +1043,12 @@ isert_create_device_ib_res(struct isert_device *device)
 	int ret;
 
 	dev_attr = &device->dev_attr;
-	ret = isert_query_device(device->ib_device, dev_attr);
-	if (ret)
+	ret = ib_query_device(device->ib_device, dev_attr);
+	if (ret) {
+		isert_err("Failed to query device %s (%d)\n",
+			  device->ib_device->name, ret);
 		return ret;
+	}
 
 	ret = isert_alloc_comps(device, dev_attr);
 	if (ret)
@@ -1070,19 +1057,38 @@ isert_create_device_ib_res(struct isert_device *device)
 	device->pd = ib_alloc_pd(device->ib_device);
 	if (IS_ERR(device->pd)) {
 		ret = PTR_ERR(device->pd);
-		isert_err("failed to allocate pd, device %p, ret=%d\n",
-			  device, ret);
+		isert_err("failed to allocate pd (%d)\n", ret);
 		goto out_cq;
 	}
 
+	/*
+	 * work-around RDMA_READs issue with ConnectX-2/3
+	 * by reserving 2 extra sge slots. still make sure to
+	 * have at least two SGEs for outgoing control PDU responses.
+	 */
 	device->max_sge_wr = dev_attr->max_sge;
-	device->max_sge_rd = dev_attr->max_sge_rd;
+	device->max_sge_rd = max(2, dev_attr->max_sge_rd - 2);
 	device->max_reg_pages = min_t(unsigned int,
 				      ISCSI_ISER_SG_TABLESIZE,
 				      dev_attr->max_fast_reg_page_list_len);
 	isert_rdma_read_reg_params(device);
 	device->pi_capable = dev_attr->device_cap_flags &
 			     IB_DEVICE_SIGNATURE_HANDOVER ? true : false;
+
+	isert_info("device %s: max_sge_wr %d\n",
+		   device->ib_device->name, device->max_sge_wr);
+	isert_info("device %s: max_sge_rd %d\n",
+		   device->ib_device->name, device->max_sge_rd);
+	isert_info("device %s: max_reg_pages %d\n",
+		   device->ib_device->name, device->max_reg_pages);
+	isert_info("device %s: pi_capable %d\n",
+		   device->ib_device->name, device->pi_capable);
+	isert_info("device %s: register_rdma_reads %d\n",
+		   device->ib_device->name, device->register_rdma_reads);
+	isert_info("device %s: rdma_read_access %s\n",
+		   device->ib_device->name,
+		   device->rdma_read_access & IB_ACCESS_REMOTE_WRITE ?
+		   "LOCAL_WRITE|REMOTE_WRITE" : "LOCAL_WRITE");
 
 	return 0;
 
