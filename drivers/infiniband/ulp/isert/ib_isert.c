@@ -1046,6 +1046,7 @@ isert_rdma_read_reg_params(struct isert_device *device)
 			device->register_rdma_reads = true;
 			device->rdma_read_access = IB_ACCESS_LOCAL_WRITE |
 						   IB_ACCESS_REMOTE_WRITE;
+			return;
 	}
 	device->register_rdma_reads = false;
 	device->rdma_read_access = IB_ACCESS_LOCAL_WRITE;
