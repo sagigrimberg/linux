@@ -98,7 +98,9 @@ struct isert_rdma_ctx {
 	struct ib_send_wr		*last_wr;
 	int				nsge_per_rdma;
 	enum dma_data_direction 	dma_dir;
-	u32				reg_offset;
+	u32				data_reg_offset;
+	u32				prot_reg_offset;
+	u32				ref_tag_offset;
 	struct isert_data_buf		data;
 	struct isert_data_buf		prot;
 	struct list_head		fr_list;

@@ -155,8 +155,7 @@ static int
 isert_set_sig_attrs(struct isert_cmd *isert_cmd, struct ib_sig_attrs *sig_attrs)
 {
 	struct se_cmd *se_cmd = &isert_cmd->iscsi_cmd->se_cmd;
-	u32 block_offset = isert_cmd->rdma_ctx.reg_offset >>
-			   ilog2(se_cmd->se_dev->dev_attrib.block_size);
+	u32 block_offset = isert_cmd->rdma_ctx.ref_tag_offset;
 
 	switch (se_cmd->prot_op) {
 	case TARGET_PROT_DIN_INSERT:
@@ -202,6 +201,7 @@ isert_reg_sig_mr(struct isert_cmd *isert_cmd,
 		 struct ib_sge *sig_sge)
 {
 	struct se_cmd *se_cmd = &isert_cmd->iscsi_cmd->se_cmd;
+	struct isert_rdma_ctx *ctx = &isert_cmd->rdma_ctx;
 	struct ib_sig_handover_wr *wr = &desc->sig_reg_wr;
 	struct ib_sig_attrs *sig_attrs = &desc->sig_attrs;
 	int err;
@@ -235,6 +235,8 @@ isert_reg_sig_mr(struct isert_cmd *isert_cmd,
 		 */
 		sig_sge->length += prot_sge->length;
 
+	ctx->ref_tag_offset = ctx->data_reg_offset >>
+			      ilog2(se_cmd->se_dev->dev_attrib.block_size);
 	desc->sig_mr_valid = 0;
 	isert_chain_wr(&isert_cmd->rdma_ctx, &wr->wr);
 
@@ -498,28 +500,21 @@ isert_build_rdmas(struct isert_cmd *isert_cmd)
 	}
 }
 
-static int
+static void
 isert_reg_dma(struct isert_cmd *isert_cmd,
 	      struct scatterlist *sg,
 	      struct ib_sge *sge)
 {
-	u32 len = min_t(u32, sg_dma_len(sg),
-			     isert_cmd->iscsi_cmd->se_cmd.data_length -
-			     isert_cmd->rdma_ctx.reg_offset);
-
 	sge->addr = sg_dma_address(sg);
-	sge->length = len;
+	sge->length = sg_dma_len(sg);
 	sge->lkey = isert_cmd->conn->device->pd->local_dma_lkey;
 
 	isert_dbg("dma_sge: addr: 0x%llx  length: 0x%x lkey: 0x%x\n",
 		  sge->addr, sge->length, sge->lkey);
-
-	return 0;
 }
 
 static int
-isert_reg_sg(struct isert_cmd *isert_cmd,
-	     struct scatterlist *sg,
+isert_reg_sg(struct scatterlist *sg,
 	     int sg_nents,
 	     struct ib_mr *mr,
 	     struct ib_reg_wr *wr,
@@ -558,20 +553,28 @@ isert_reg_data_sg(struct isert_cmd *isert_cmd,
 	struct scatterlist *sg;
 	u32 sg_off;
 	unsigned int sg_nents;
+	int err;
 
-	sg_off = ctx->reg_offset >> PAGE_SHIFT;
+	sg_off = ctx->data_reg_offset >> PAGE_SHIFT;
 	sg = &ctx->data.sg[sg_off];
 	sg_nents = min_t(unsigned int, device->max_reg_pages,
 			 ctx->data.nents - sg_off);
 
-	if (sg_nents == 1 && !isert_cmd_reg_on_rdma_read(isert_cmd))
+	if (sg_nents == 1 && !isert_cmd_reg_on_rdma_read(isert_cmd)) {
 		/* global dma lkey suffices */
-		return isert_reg_dma(isert_cmd, sg, sge);
+		isert_reg_dma(isert_cmd, sg, sge);
+		goto done;
+	}
 
-	isert_reg_sg(isert_cmd, sg, sg_nents, desc->data_mr, wr, sge);
+	err = isert_reg_sg(sg, sg_nents, desc->data_mr, wr, sge);
+	if (unlikely(err))
+		return err;
 
 	desc->data_mr_valid = 0;
 	isert_chain_wr(ctx, &wr->wr);
+
+done:
+	ctx->data_reg_offset += sge->length;
 
 	return 0;
 }
@@ -585,25 +588,32 @@ isert_reg_prot_sg(struct isert_cmd *isert_cmd,
 	struct isert_rdma_ctx *ctx = &isert_cmd->rdma_ctx;
 	struct ib_reg_wr *wr = &desc->prot_reg_wr;
 	struct scatterlist *sg;
-	u32 bs = isert_cmd->iscsi_cmd->se_cmd.se_dev->dev_attrib.block_size;
 	u32 sg_off;
 	unsigned int max_prot_pages;
 	unsigned int sg_nents;
+	int err;
 
-	sg_off = ((ctx->reg_offset >> ilog2(bs)) * 8) >> PAGE_SHIFT;
+	sg_off = ctx->prot_reg_offset >> PAGE_SHIFT;
 	sg = &ctx->prot.sg[sg_off];
 	max_prot_pages = DIV_ROUND_UP(device->max_reg_pages * 8, 512);
 	sg_nents = min_t(unsigned int, max_prot_pages,
 			 ctx->prot.nents - sg_off);
 
-	if (sg_nents == 1 && !isert_cmd_reg_on_rdma_read(isert_cmd))
+	if (sg_nents == 1 && !isert_cmd_reg_on_rdma_read(isert_cmd)) {
 		/* global dma lkey suffices */
-		return isert_reg_dma(isert_cmd, sg, sge);
+		isert_reg_dma(isert_cmd, sg, sge);
+		goto done;
+	}
 
-	isert_reg_sg(isert_cmd, sg, sg_nents, desc->prot_mr, wr, sge);
+	err = isert_reg_sg(sg, sg_nents, desc->prot_mr, wr, sge);
+	if (unlikely(err))
+		return err;
 
 	desc->prot_mr_valid = 0;
 	isert_chain_wr(ctx, &wr->wr);
+
+done:
+	ctx->prot_reg_offset += sge->length;
 
 	return 0;
 }
@@ -620,11 +630,13 @@ isert_reg_mem(struct isert_cmd *isert_cmd,
 	int err = 0;
 
 	if (!isert_cmd_reg_needed(isert_cmd)) {
-		u32 sg_off = ctx->reg_offset >> PAGE_SHIFT;
+		u32 sg_off = ctx->data_reg_offset >> PAGE_SHIFT;
 		struct scatterlist *sg = &ctx->data.sg[sg_off];
 
-		/* global dma lkey suffices */
-		return isert_reg_dma(isert_cmd, sg, sge);
+		/* global dma lkey suffices - skip acquiring a reg desc */
+		isert_reg_dma(isert_cmd, sg, sge);
+		ctx->data_reg_offset += sge->length;
+		return 0;
 	}
 
 	desc = isert_fr_desc_get(isert_conn);
@@ -654,8 +666,6 @@ isert_reg_mem(struct isert_cmd *isert_cmd,
 			return err;
 		desc->sig_protected = 1;
 	}
-
-	ctx->reg_offset += data_sge->length;
 
 	isert_dbg("sge: addr: 0x%llx  length: 0x%x lkey: 0x%x\n",
 		 sge->addr, sge->length, sge->lkey);
