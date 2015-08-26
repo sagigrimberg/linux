@@ -185,6 +185,7 @@ struct isert_device {
 	struct isert_comp	*comps;
 	int                     comps_used;
 	bool			pi_capable;
+	bool			fr_capable;
 	int			max_sge_rd;
 	int			max_sge_wr;
 	unsigned int		max_reg_pages;

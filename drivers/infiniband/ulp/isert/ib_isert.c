@@ -1086,6 +1086,8 @@ isert_create_device_ib_res(struct isert_device *device)
 	isert_rdma_read_reg_params(device);
 	device->pi_capable = dev_attr->device_cap_flags &
 			     IB_DEVICE_SIGNATURE_HANDOVER ? true : false;
+	device->fr_capable = dev_attr->device_cap_flags &
+			     IB_DEVICE_MEM_MGT_EXTENSIONS ? true : false;
 
 	isert_info("device %s: max_sge_wr %d\n",
 		   device->ib_device->name, device->max_sge_wr);
@@ -1093,6 +1095,8 @@ isert_create_device_ib_res(struct isert_device *device)
 		   device->ib_device->name, device->max_sge_rd);
 	isert_info("device %s: max_reg_pages %d\n",
 		   device->ib_device->name, device->max_reg_pages);
+	isert_info("device %s: fr_capable %d\n",
+		   device->ib_device->name, device->fr_capable);
 	isert_info("device %s: pi_capable %d\n",
 		   device->ib_device->name, device->pi_capable);
 	isert_info("device %s: register_rdma_reads %d\n",
@@ -1904,7 +1908,7 @@ isert_put_login_tx(struct iscsi_conn *conn, struct iscsi_login *login,
 	if (!login->login_failed) {
 		if (login->login_complete) {
 			if (!conn->sess->sess_ops->SessionType &&
-			    isert_conn->device->pi_capable) {
+			    isert_conn->device->fr_capable) {
 				ret = isert_alloc_fastreg_pool(isert_conn);
 				if (ret) {
 					isert_err("Conn: %p failed to create"
