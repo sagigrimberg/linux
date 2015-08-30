@@ -752,7 +752,8 @@ static struct mlx5_ib_mr *reg_umr(struct ib_pd *pd, struct ib_umem *umem,
 	struct device *ddev = dev->ib_dev.dma_device;
 	struct umr_common *umrc = &dev->umrc;
 	struct mlx5_ib_umr_context umr_context;
-	struct ib_send_wr wr, *bad;
+	struct mlx5_umr_wr umrwr;
+	struct ib_send_wr *bad;
 	struct mlx5_ib_mr *mr;
 	struct ib_sge sg;
 	int size;
@@ -798,14 +799,14 @@ static struct mlx5_ib_mr *reg_umr(struct ib_pd *pd, struct ib_umem *umem,
 		goto free_pas;
 	}
 
-	memset(&wr, 0, sizeof(wr));
-	wr.wr_id = (u64)(unsigned long)&umr_context;
-	prep_umr_reg_wqe(pd, &wr, &sg, dma, npages, mr->mmr.key, page_shift,
-			 virt_addr, len, access_flags);
+	memset(&umrwr, 0, sizeof(umrwr));
+	umrwr.wr.wr_id = (u64)(unsigned long)&umr_context;
+	prep_umr_reg_wqe(pd, &umrwr.wr, &sg, dma, npages, mr->mmr.key,
+			 page_shift, virt_addr, len, access_flags);
 
 	mlx5_ib_init_umr_context(&umr_context);
 	down(&umrc->sem);
-	err = ib_post_send(umrc->qp, &wr, &bad);
+	err = ib_post_send(umrc->qp, &umrwr.wr, &bad);
 	if (err) {
 		mlx5_ib_warn(dev, "post send failed, err %d\n", err);
 		goto unmap_dma;
@@ -1122,16 +1123,17 @@ static int unreg_umr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
 {
 	struct umr_common *umrc = &dev->umrc;
 	struct mlx5_ib_umr_context umr_context;
-	struct ib_send_wr wr, *bad;
+	struct mlx5_umr_wr umrwr;
+	struct ib_send_wr *bad;
 	int err;
 
-	memset(&wr, 0, sizeof(wr));
-	wr.wr_id = (u64)(unsigned long)&umr_context;
-	prep_umr_unreg_wqe(dev, &wr, mr->mmr.key);
+	memset(&umrwr, 0, sizeof(umrwr));
+	umrwr.wr.wr_id = (u64)(unsigned long)&umr_context;
+	prep_umr_unreg_wqe(dev, &umrwr.wr, mr->mmr.key);
 
 	mlx5_ib_init_umr_context(&umr_context);
 	down(&umrc->sem);
-	err = ib_post_send(umrc->qp, &wr, &bad);
+	err = ib_post_send(umrc->qp, &umrwr.wr, &bad);
 	if (err) {
 		up(&umrc->sem);
 		mlx5_ib_dbg(dev, "err %d\n", err);
