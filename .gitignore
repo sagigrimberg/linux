@@ -36,7 +36,8 @@
 modules.builtin
 Module.symvers
 *.dwo
-
+Documentation/
+arch/
 #
 # Top-level generic files
 #
