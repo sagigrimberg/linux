@@ -880,6 +880,9 @@ isert_conn_terminate(struct isert_conn *isert_conn)
 		if (err)
 			isert_warn("Failed rdma_disconnect isert_conn %p\n",
 				   isert_conn);
+
+		if (isert_conn->conn)
+			iscsit_cause_connection_reinstatement(isert_conn->conn, 0);
 		break;
 	default:
 		isert_warn("conn %p teminating in state %d\n",
