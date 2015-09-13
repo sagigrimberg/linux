@@ -514,23 +514,29 @@ isert_reg_dma(struct isert_cmd *isert_cmd,
 }
 
 static int
-isert_reg_sg(struct scatterlist *sg,
+isert_reg_sg(struct ib_mr *mr,
+	     struct scatterlist *sg,
 	     int sg_nents,
-	     struct ib_mr *mr,
+	     int access,
 	     struct ib_reg_wr *wr,
 	     struct ib_sge *sge)
 {
 	int ret;
 
-	ret = ib_map_mr_sg(mr, sg, sg_nents);
+	ret = ib_map_mr_sg(mr, sg, sg_nents, PAGE_SIZE);
 	if (ret) {
 		isert_err("failed to map sg %p with %d entries\n",
 			  sg, sg_nents);
 		return ret;
 	}
 
-	ib_set_reg_wr(mr, mr->lkey, IB_ACCESS_LOCAL_WRITE,
-		      ISER_FASTREG_LI_WRID, false, wr);
+	wr->wr.opcode = IB_WR_REG_MR;
+	wr->wr.wr_id = ISER_FASTREG_LI_WRID;
+	wr->wr.send_flags = 0;
+	wr->wr.num_sge = 0;
+	wr->mr = mr;
+	wr->key = mr->lkey;
+	wr->access = access;
 
 	sge->lkey = mr->lkey;
 	sge->addr = mr->iova;;
@@ -553,7 +559,7 @@ isert_reg_data_sg(struct isert_cmd *isert_cmd,
 	struct scatterlist *sg;
 	u32 sg_off;
 	unsigned int sg_nents;
-	int err;
+	int access, err;
 
 	sg_off = ctx->data_reg_offset >> PAGE_SHIFT;
 	sg = &ctx->data.sg[sg_off];
@@ -566,7 +572,10 @@ isert_reg_data_sg(struct isert_cmd *isert_cmd,
 		goto done;
 	}
 
-	err = isert_reg_sg(sg, sg_nents, desc->data_mr, wr, sge);
+	access = (ctx->dma_dir == DMA_FROM_DEVICE) ?
+		 device->rdma_read_access : IB_ACCESS_LOCAL_WRITE;
+
+	err = isert_reg_sg(desc->data_mr, sg, sg_nents, access, wr, sge);
 	if (unlikely(err))
 		return err;
 
@@ -605,7 +614,8 @@ isert_reg_prot_sg(struct isert_cmd *isert_cmd,
 		goto done;
 	}
 
-	err = isert_reg_sg(sg, sg_nents, desc->prot_mr, wr, sge);
+	err = isert_reg_sg(desc->prot_mr, sg, sg_nents,
+			   IB_ACCESS_LOCAL_WRITE, wr, sge);
 	if (unlikely(err))
 		return err;
 
