@@ -575,8 +575,6 @@ void iser_release_work(struct work_struct *work)
 
 	/* Wait for conn_stop to complete */
 	wait_for_completion(&iser_conn->stop_completion);
-	/* Wait for IB resouces cleanup to complete */
-	wait_for_completion(&iser_conn->ib_completion);
 
 	mutex_lock(&iser_conn->state_mutex);
 	iser_conn->state = ISER_CONN_DOWN;
@@ -875,7 +873,6 @@ static void iser_cleanup_handler(struct rdma_cm_id *cma_id,
 	 */
 	iser_disconnected_handler(cma_id);
 	iser_free_ib_conn_res(iser_conn, destroy);
-	complete(&iser_conn->ib_completion);
 };
 
 static int iser_cma_handler(struct rdma_cm_id *cma_id, struct rdma_cm_event *event)
@@ -940,7 +937,6 @@ void iser_conn_init(struct iser_conn *iser_conn)
 
 	iser_conn->state = ISER_CONN_INIT;
 	init_completion(&iser_conn->stop_completion);
-	init_completion(&iser_conn->ib_completion);
 	init_completion(&iser_conn->up_completion);
 	INIT_LIST_HEAD(&iser_conn->conn_list);
 	mutex_init(&iser_conn->state_mutex);

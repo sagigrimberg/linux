@@ -489,7 +489,6 @@ struct ib_conn {
  * @release_work:     deffered work for release job
  * @state_mutex:      protects iser onnection state
  * @stop_completion:  conn_stop completion
- * @ib_completion:    RDMA cleanup completion
  * @up_completion:    connection establishment completed
  *                    (state is ISER_CONN_UP)
  * @conn_list:        entry in ig conn list
@@ -514,7 +513,6 @@ struct iser_conn {
 	struct work_struct	     release_work;
 	struct mutex		     state_mutex;
 	struct completion	     stop_completion;
-	struct completion	     ib_completion;
 	struct completion	     up_completion;
 	struct list_head	     conn_list;
 	struct iser_login_desc       login_desc;
