@@ -688,7 +688,7 @@ int iser_conn_terminate(struct iser_conn *iser_conn)
 				 iser_conn, err);
 
 		/* block until all flush errors are consumed */
-		ib_drain_sq(ib_conn->qp);
+		ib_drain_qp(ib_conn->qp);
 	}
 
 	return 1;
