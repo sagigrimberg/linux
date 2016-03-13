@@ -840,11 +840,11 @@ static void iser_connected_handler(struct rdma_cm_id *cma_id,
 	if (private_data) {
 		u8 flags = *(u8 *)private_data;
 
-		iser_conn->snd_w_inv = !(flags & ISER_SEND_W_INV_NOT_SUP);
+		iser_conn->remote_inv = !(flags & ISER_SEND_W_INV_NOT_SUP);
 	}
 
 	iser_info("conn %p: negotiated %s invalidation\n",
-		  iser_conn, iser_conn->snd_w_inv ? "remote" : "local");
+		  iser_conn, iser_conn->remote_inv ? "remote" : "local");
 
 	iser_conn->state = ISER_CONN_UP;
 	complete(&iser_conn->up_completion);

@@ -498,6 +498,7 @@ struct ib_conn {
  * @num_rx_descs:     number of rx descriptors
  * @scsi_sg_tablesize: scsi host sg_tablesize
  * @scsi_max_sectors: scsi host max sectors
+ * @remote_inv:       remote invalidate support
  */
 struct iser_conn {
 	struct ib_conn		     ib_conn;
@@ -521,7 +522,7 @@ struct iser_conn {
 	u32                          num_rx_descs;
 	unsigned short               scsi_sg_tablesize;
 	unsigned int                 scsi_max_sectors;
-	bool			     snd_w_inv;
+	bool			     remote_inv;
 };
 
 /**

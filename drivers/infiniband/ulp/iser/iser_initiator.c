@@ -611,7 +611,7 @@ iser_check_remote_inv(struct iser_conn *iser_conn,
 		iser_dbg("conn %p: remote invalidation for rkey %#x\n",
 			 iser_conn, rkey);
 
-		if (unlikely(!iser_conn->snd_w_inv)) {
+		if (unlikely(!iser_conn->remote_inv)) {
 			iser_err("conn %p: unexepected remote invalidation, "
 				 "terminating connection\n", iser_conn);
 			return -EPROTO;
