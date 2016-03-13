@@ -458,6 +458,7 @@ struct iser_fr_pool {
  * @comp:                iser completion context
  * @fr_pool:             connection fast registration poool
  * @pi_support:          Indicate device T10-PI support
+ * @reg_cqe:             registration completion handle
  */
 struct ib_conn {
 	struct rdma_cm_id           *cma_id;
