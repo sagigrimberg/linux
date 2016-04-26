@@ -978,14 +978,22 @@ static int rxe_peek_cq(struct ib_cq *ibcq, int wc_cnt)
 	return (count > wc_cnt) ? wc_cnt : count;
 }
 
-static int rxe_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
+static int rxe_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags notify_flags)
 {
 	struct rxe_cq *cq = to_rcq(ibcq);
+	unsigned long flags;
+	int ret = 0;
 
+	spin_lock_irqsave(&cq->cq_lock, flags);
 	if (cq->notify != IB_CQ_NEXT_COMP)
-		cq->notify = flags & IB_CQ_SOLICITED_MASK;
+		cq->notify = notify_flags & IB_CQ_SOLICITED_MASK;
 
-	return 0;
+	if ((notify_flags & IB_CQ_REPORT_MISSED_EVENTS) &&
+	    cq->queue->buf->consumer_index != cq->queue->buf->producer_index)
+		ret = 1;
+	spin_unlock_irqrestore(&cq->cq_lock, flags);
+
+	return ret;
 }
 
 static struct ib_mr *rxe_get_dma_mr(struct ib_pd *ibpd, int access)
