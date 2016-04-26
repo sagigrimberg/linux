@@ -559,8 +559,14 @@ int rxe_requester(void *arg)
 	int ret;
 
 next_wqe:
-	if (unlikely(!qp->valid || qp->req.state == QP_STATE_ERROR))
+	if (unlikely(!qp->valid || qp->req.state == QP_STATE_ERROR)) {
+		/* drain work and packet queues */
+		qp->req.wqe_index = next_index(qp->sq.queue,
+						qp->req.wqe_index);
+		rxe_run_task(&qp->resp.task, 1);
+		rxe_run_task(&qp->comp.task, 1);
 		goto exit;
+	}
 
 	if (unlikely(qp->req.state == QP_STATE_RESET)) {
 		qp->req.wqe_index = consumer_index(qp->sq.queue);

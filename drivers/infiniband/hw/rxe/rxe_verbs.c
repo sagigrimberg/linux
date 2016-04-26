@@ -882,6 +882,12 @@ static int rxe_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
 
 	spin_unlock_irqrestore(&rq->producer_lock, flags);
 
+	if (unlikely(!qp->valid || qp->resp.state == QP_STATE_ERROR)) {
+		/* drain work and packet queues */
+		rxe_run_task(&qp->resp.task, 1);
+		rxe_run_task(&qp->comp.task, 1);
+	}
+
 err1:
 	return err;
 }
